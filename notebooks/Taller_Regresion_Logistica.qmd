@@ -1,0 +1,1016 @@
+---
+title: "Taller: Modelo de Regresión Logística"
+subtitle: "Consumo Energético – Universidad Surcolombiana (USCO) – Especialización en Estadística"
+author: "Sergio Andres Beltran, Juan Pablo Donato"
+date: "2026-04-24"
+format:
+  html:
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    toc-location: left
+    toc-title: "Contenido"
+    theme: cerulean
+    css: usco_apa.css
+    highlight-style: tango
+    number-sections: true
+    df-print: paged
+    code-fold: true
+    code-summary: "Ver código"
+    embed-resources: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.width = 10, fig.height = 6, fig.align = "center"
+)
+
+paquetes <- c("ggplot2", "dplyr", "knitr", "kableExtra", "scales")
+nuevos   <- paquetes[!(paquetes %in% installed.packages()[, "Package"])]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cran.r-project.org")
+
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(tidyr)
+
+# ── Función auxiliar: tabla estilo APA / LaTeX ────────────────────────────────
+# Solo líneas horizontales (top, header-bottom, bottom), sin bordes verticales,
+# sin colores de fondo. Nota en itálica debajo.
+apa_table <- function(df, col.names = names(df), caption = NULL, nota = NULL,
+                      align = NULL, ...) {
+  t <- kable(df, col.names = col.names, caption = caption,
+             align = align, row.names = FALSE, ...) |>
+    kable_styling(
+      bootstrap_options = c("condensed"),
+      full_width = FALSE,
+      position = "left",
+      html_font = '"Times New Roman", Times, serif'
+    ) |>
+    row_spec(0, bold = TRUE, extra_css = "border-top: 2px solid #000; border-bottom: 1px solid #000;") |>
+    row_spec(nrow(df), extra_css = "border-bottom: 2px solid #000;")
+
+  if (!is.null(nota)) {
+    t <- t |> footnote(general = nota, general_title = "Nota.",
+                       footnote_as_chunk = TRUE,
+                       title_format = c("italic"))
+  }
+  t
+}
+```
+
+---
+
+# Descripción del Problema e Hipótesis
+
+La Sede Central de la Universidad Surcolombiana (USCO) cuenta con **cinco cuentas eléctricas activas** (Central 1 a Central 5). La normativa eléctrica colombiana (CREG 015 de 2018) establece que la relación entre energía reactiva y energía activa **no debe superar 0.48**. El incumplimiento de esta norma genera recargos económicos directos en la factura eléctrica.
+
+El análisis se aborda en dos niveles:
+
+- **Nivel Sede:** ¿El consumo total de energía activa de la sede predice si alguna cuenta incumplirá la norma ese mes?
+- **Nivel Cuenta:** ¿El consumo de energía activa de una cuenta individual predice si esa cuenta cumplirá o no la norma?
+
+::: {.callout-note title="Hipótesis del Estudio"}
+**Modelo Simple — Nivel Sede:**
+
+- $H_0: \beta_1 = 0$ → La energía activa total NO predice el incumplimiento normativo de la sede.
+- $H_1: \beta_1 \neq 0$ → La energía activa total SÍ predice el incumplimiento normativo.
+
+**Modelo Múltiple — Nivel Sede:**
+
+- $H_0: \beta_1 = \beta_2 = 0$ → Ni la energía activa ni el mes del año explican el incumplimiento.
+- $H_1$: Al menos un $\beta_k \neq 0$ → Alguna variable predice el incumplimiento.
+
+**Modelos por Cuenta Individual:**
+
+- $H_0: \beta_1 = 0$ → El consumo activo de la cuenta NO predice su propio cumplimiento.
+- $H_1: \beta_1 \neq 0$ → El consumo activo SÍ predice el cumplimiento de la cuenta.
+:::
+
+---
+
+# Descripción de Variables
+
+```{r carga_datos}
+# Definición de directorios y carga de fuentes de datos
+RUTA_BASE <- "C:/Users/ESTUDIANTES/Documents/Working Holydays/"
+
+# ── Carga de las dos tablas exportadas por el script de unificación ─────────────
+dt_cuenta <- read.csv(paste0(RUTA_BASE, "Consumo_Central.csv"),
+                      header = TRUE, sep = ",")
+dt_sede   <- read.csv(paste0(RUTA_BASE, "Resumen_Sede.csv"),
+                      header = TRUE, sep = ",")
+
+# ── Conversiones de tipo necesarias para los modelos ─────────────────────────
+dt_cuenta$Cuenta       <- factor(dt_cuenta$Cuenta)
+dt_cuenta$Nombre_Cuenta<- factor(dt_cuenta$Nombre_Cuenta)
+dt_cuenta$Cumple       <- factor(dt_cuenta$Cumple, levels = c("Sí", "No"))
+
+
+dt_sede$Sede_Incumple  <- as.integer(dt_sede$Sede_Incumple)
+
+# ── Tabla resumen de datos cargados ─────────────────────────────────────
+resumen_datos <- data.frame(
+  Concepto = c("Registros cuenta-período (Tabla 1)",
+               "Registros sede-período (Tabla 2)",
+               "Cuentas activas",
+               "Período cubierto",
+               "Períodos con incumplimiento (sede)"),
+  Valor = c(as.character(nrow(dt_cuenta)),
+            as.character(nrow(dt_sede)),
+            as.character(length(unique(dt_cuenta$Cuenta))),
+            paste(min(dt_cuenta$Ano), "–", max(dt_cuenta$Ano)),
+            as.character(sum(dt_sede$Sede_Incumple)))
+)
+
+apa_table(resumen_datos,
+          col.names = c("Concepto", "Valor"),
+          caption   = "Resumen de los Datos Cargados",
+          align     = c("l", "r"))
+```
+
+```{r primeros_registros_cuenta}
+apa_table(
+  head(dt_cuenta[, c("Ano", "Mes", "Cuenta", "Nombre_Cuenta",
+                     "Activa", "Reactiva", "Relacion", "Cumple", "Pago")], 8),
+  caption = "Primeros 8 registros — Consumo por Cuenta (Tabla 1)",
+  align   = c("c", "c", "c", "l", "r", "r", "r", "c", "r")
+)
+```
+
+```{r primeros_registros_sede}
+apa_table(
+  head(dt_sede[, c("Ano", "Mes", "Tiempo", "Activa_Total",
+                   "Cuentas_Pagadas", "Cuentas_Incumplen", "Sede_Incumple")], 8),
+  caption = "Primeros 8 registros — Resumen Sede (Tabla 2)",
+  align   = c("c", "c", "c", "r", "c", "c", "c")
+)
+```
+
+```{r tabla_variables}
+tabla_vars <- data.frame(
+  Tabla     = c("Tabla 2", "Tabla 2", "Tabla 2",
+                "Tabla 1", "Tabla 1", "Tabla 1", "Tabla 1"),
+  Variable  = c("Sede_Incumple", "Activa_Total", "Cuentas_Incumplen",
+                "Cumple_bin", "Activa", "Cuenta", "Pago"),
+  Tipo      = c("Binaria (0/1)", "Continua", "Discreta (0–5)",
+                "Binaria (0/1)", "Continua", "Categórica (5 niveles)", "Continua"),
+  Rol       = c("**Y — Modelo Sede**", "X principal — Modelo Sede",
+                "Descriptiva",
+                "Variable no utilizada en modelos de este análisis", "X principal — Modelo Cuenta",
+                "Covariable — Modelo Unificado", "Descriptiva"),
+  Descripcion = c(
+    "1 = al menos una cuenta incumple ese mes; 0 = todas cumplen",
+    "Suma de energía activa de las 5 cuentas (kWh)",
+    "Número de cuentas con Reactiva/Activa > 0.48 ese mes",
+    "1 = cuenta cumple norma ese mes; 0 = incumple",
+    "Energía activa individual de la cuenta (kWh)",
+    "Identificador de cuenta (Central 1 a Central 5)",
+    "Valor pagado por la cuenta ese período (COP)"
+  )
+)
+
+apa_table(tabla_vars,
+         col.names = c("Tabla", "Variable", "Tipo", "Rol", "Descripción"),
+         caption   = "Diccionario de Variables del Estudio",
+         align     = c("l", "l", "l", "l", "l"))
+```
+
+::: {.callout-warning title="Variables excluidas del modelo — Razón metodológica"}
+**`Relacion`** y **`Reactiva`** no se incluyen como predictoras porque `Cumple` se define directamente como `Relacion ≤ 0.48`, donde `Relacion = Reactiva / Activa`. Incluirlas sería tautológico: el modelo estaría explicando Y con la misma información usada para construir Y, generando coeficientes artificialmente perfectos sin valor predictivo real.
+:::
+
+---
+
+# Exploración de Datos
+
+## Distribución del Cumplimiento Normativo
+
+```{r epv_tabla}
+# ── Período máximo de referencia ──────────────────────────────────────────────
+periodo_max <- max(dt_cuenta$Tiempo, na.rm = TRUE)  # 291
+
+# ── Tabla EPV por cuenta con cobertura temporal ──────────────────────────────
+epv_tabla <- dt_cuenta %>%
+  group_by(Cuenta, Nombre_Cuenta) %>%
+  summarise(
+    Inicio      = min(Tiempo, na.rm = TRUE),
+    Períodos    = n(),
+    Esperados   = periodo_max - Inicio + 1,
+    Faltantes   = Esperados - Períodos,
+    Cumple    = sum(Cumple == "Sí", na.rm = TRUE),
+    No_Cumple = Períodos - Cumple,
+    Pct_Cumple  = round(Cumple  / Períodos * 100, 1),
+    EPV_max_vars = floor(No_Cumple / 10),
+    .groups = "drop"
+  )
+
+# ── Fila resumen sede ─────────────────────────────────────────────────────────
+epv_sede <- dt_sede %>%
+  summarise(
+    Inicio       = min(Tiempo, na.rm = TRUE),
+    Períodos     = n(),
+    Esperados    = periodo_max - Inicio + 1,
+    Faltantes    = Esperados - Períodos,
+    Cumple       = sum(Sede_Incumple == 0),
+    No_Cumple    = sum(Sede_Incumple == 1),
+    Pct_Cumple   = round(Cumple / Períodos * 100, 1),
+    EPV_max_vars = floor(No_Cumple / 10)
+  ) %>%
+  mutate(Cuenta = "SEDE", Nombre_Cuenta = "Sede Central (todas)") %>%
+  select(Cuenta, Nombre_Cuenta, everything())
+
+epv_completa <- bind_rows(epv_tabla, epv_sede)
+
+apa_table(epv_completa,
+         col.names = c("Cuenta", "Nombre", "Inicio", "Períodos",
+                       "Esperados", "Faltantes", "Cumple",
+                       "Incumple", "% Cumple", "Máx. vars (EPV)"),
+         caption   = "Distribución del Cumplimiento Normativo, Cobertura Temporal y Capacidad del Modelo (EPV)",
+         align     = c("l", "l", "c", "c", "c", "c", "r", "r", "r", "c"),
+         nota      = paste0("Inicio: período secuencial en que la cuenta registra su primera medición. ",
+                            "Esperados: períodos desde el inicio hasta el período ", periodo_max,
+                            ". Faltantes: períodos sin registro desde el inicio (huecos en la serie)."))
+```
+
+::: {.callout-note title="Regla de los 10 Eventos por Variable (EPV)"}
+La regla EPV del módulo establece: $\text{Máx. variables} = \frac{\text{Total incumplimientos}}{10}$. Para el **modelo a nivel sede** (142 incumplimientos) el modelo soporta hasta **14 variables**. A nivel de cuenta individual no se registran incumplimientos propios en ninguna de las cinco cuentas, por lo que el análisis de la sección 6 se orienta a predecir el incumplimiento de sede usando el consumo activo de cada cuenta como predictor individual.
+:::
+
+## Gráfico Principal: Pago, Cuentas Pagadas e Incumplimiento en el Tiempo
+
+```{r grafico_doble_eje, fig.width=13, fig.height=6}
+# Escala de transformación para el eje secundario (0–5 → escala del pago)
+pago_max  <- max(dt_sede$Pago_Total_Sede, na.rm = TRUE)
+escala_k  <- pago_max / 5          # factor para llevar 0–5 a la escala del pago
+
+ggplot(dt_sede, aes(x = Tiempo)) +
+
+  # ── Área: Cuentas pagadas (fondo) ──────────────────────────────────────────
+  geom_area(aes(y = Cuentas_Pagadas * escala_k),
+            fill = "#AED6F1", alpha = 0.4) +
+
+  # ── Barras: Cuentas que incumplen ──────────────────────────────────────────
+  geom_col(aes(y = Cuentas_Incumplen * escala_k),
+           fill  = "#E74C3C", alpha = 0.6, width = 0.8) +
+
+  # ── Línea: Pago Total Sede ─────────────────────────────────────────────────
+  geom_line(aes(y = Pago_Total_Sede),
+            color = "#2C3E50", linewidth = 1.1) +
+  geom_point(aes(y = Pago_Total_Sede,
+                 color = factor(Sede_Incumple)),
+             size = 1.8, alpha = 0.8) +
+  scale_color_manual(
+    values = c("0" = "#27AE60", "1" = "#E74C3C"),
+    labels = c("0" = "Sede cumple", "1" = "Sede incumple"),
+    name   = "Estado normativo"
+  ) +
+
+  # ── Eje secundario (derecho): escala 0–5 ──────────────────────────────────
+  scale_y_continuous(
+    name   = "Pago Total Sede (COP)",
+    labels = label_comma(big.mark = ".", decimal.mark = ","),
+    sec.axis = sec_axis(
+      transform = ~ . / escala_k,
+      name      = "Número de cuentas (máx. 5)",
+      breaks    = 0:5
+    )
+  ) +
+
+  labs(
+    title    = "Pago Total, Cuentas Pagadas y Cuentas en Incumplimiento — Sede Central USCO",
+    subtitle = "Línea: Pago total mensual | Área azul: cuentas pagadas | Barras rojas: cuentas que incumplen",
+    x        = "Período (meses)",
+    caption  = "Fuente: USCO — Consumo Sede Central 2000–2025"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", color = "#2C3E50", size = 13),
+    plot.subtitle    = element_text(color = "#555555", size = 10),
+    axis.title.y     = element_text(color = "#2C3E50"),
+    axis.title.y.right = element_text(color = "#E74C3C"),
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+**Interpretación:** Los períodos donde las barras rojas son más altas (más cuentas incumpliendo) tienden a coincidir visualmente con picos en el valor del pago, lo que sugiere que el incumplimiento normativo tiene un efecto económico observable. Esta relación motiva la construcción del modelo logístico.
+
+## Consumo Activo por Cuenta en el Tiempo
+
+```{r grafico_activa_cuentas, fig.width=12, fig.height=5}
+ggplot(dt_cuenta, aes(x = Tiempo, y = Activa / 1000,
+                       color = Nombre_Cuenta, group = Nombre_Cuenta)) +
+  geom_line(alpha = 0.8, linewidth = 0.9) +
+  geom_point(aes(shape = Cumple), size = 1.5, alpha = 0.6) +
+  scale_shape_manual(values = c("Sí" = 19, "No" = 4),
+                     name   = "Cumple norma") +
+  scale_color_brewer(palette = "Set1", name = "Cuenta") +
+  labs(
+    title    = "Energía Activa por Cuenta — Sede Central USCO",
+    subtitle = "Punto ✕ = período de incumplimiento normativo",
+    x        = "Período (meses)",
+    y        = "Energía Activa (miles de kWh)",
+    caption  = "Fuente: USCO — Consumo Sede Central 2000–2025"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", color = "#2C3E50"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# Modelo Logístico Simple — Nivel Sede
+
+**Variable Dependiente ($Y$):** `Sede_Incumple` (0 = todas cumplen, 1 = al menos una incumple)
+**Variable Predictora ($X$):** `Activa_Total` (kWh totales de la sede ese mes)
+
+## La Función Logística
+
+El modelo no estima directamente si la sede incumplirá, sino la **probabilidad** de que ocurra el incumplimiento, acotada estrictamente entre 0 y 1 mediante la función sigmoide:
+
+$$P(Sede\_Incumple = 1 \mid X) = \frac{1}{1 + e^{-(\beta_0 + \beta_1 \cdot Activa\_Total)}}$$
+
+## Estimación del Modelo
+
+```{r modelo_simple_sede}
+modelo_sede_simple <- glm(Sede_Incumple ~ Activa_Total,
+                          data   = dt_sede,
+                          family = binomial(link = "logit"))
+
+resumen_s <- summary(modelo_sede_simple)
+b0_s <- coef(modelo_sede_simple)[1]
+b1_s <- coef(modelo_sede_simple)[2]
+
+# ── Tabla de coeficientes ──────────────────────────────────────────────────────
+coef_tabla_s <- data.frame(
+  Parámetro   = c("β₀ (Intercepto)", "β₁ (Activa_Total)"),
+  Estimador   = round(resumen_s$coefficients[, 1], 6),
+  Error_Std   = round(resumen_s$coefficients[, 2], 6),
+  z           = round(resumen_s$coefficients[, 3], 4),
+  p_valor     = format(resumen_s$coefficients[, 4], scientific = TRUE)
+)
+
+apa_table(coef_tabla_s,
+         col.names = c("Parámetro", "Estimador", "Error Estándar", "z", "p-valor"),
+         caption   = "Coeficientes del Modelo Logístico Simple — Nivel Sede",
+         align     = c("l", "r", "r", "r", "r"))
+
+# ── Indicadores de ajuste ─────────────────────────────────────────────────────
+ajuste_s <- data.frame(
+  Indicador = c("Devianza nula", "Devianza residual", "AIC", "N observaciones"),
+  Valor     = c(round(resumen_s$null.deviance, 2),
+                round(resumen_s$deviance, 2),
+                round(resumen_s$aic, 2),
+                nrow(dt_sede))
+)
+
+apa_table(ajuste_s,
+         col.names = c("Indicador", "Valor"),
+         caption   = "Indicadores de Ajuste — Modelo Logístico Simple (Sede)",
+         align     = c("l", "r"))
+```
+
+## Ecuación del Modelo
+
+```{r ecuacion_simple_sede, include=FALSE}
+# Extraer valores para uso en texto markdown
+b0_s_fmt <- formatC(b0_s, format = "f", digits = 4)
+b1_s_fmt <- formatC(b1_s, format = "f", digits = 8)
+or_s_val <- exp(b1_s)
+or_s_fmt <- formatC(or_s_val, format = "f", digits = 6)
+```
+
+::: {.callout-important title="Ecuación del Modelo Logístico Simple"}
+**Escala Log-Odds (Logit):**
+
+$$\ln\left(\frac{P}{1-P}\right) = `r b0_s_fmt` + `r b1_s_fmt` \cdot Activa\_Total$$
+
+**Escala de Probabilidad (Sigmoide):**
+
+$$P(Incumple) = \frac{1}{1 + e^{-(`r b0_s_fmt` + `r b1_s_fmt` \cdot Activa\_Total)}}$$
+
+**Interpretación del coeficiente $\beta_1$:**
+
+- Por cada kWh adicional de Activa_Total, el log-odds de incumplimiento cambia en `r b1_s_fmt` unidades.
+- En términos del **Odds Ratio**: $OR = e^{\beta_1} = e^{`r b1_s_fmt`} = `r or_s_fmt`$
+:::
+
+## Interpretación: Odds Ratios e Intervalos de Confianza
+
+```{r or_simple_sede}
+or_sede_s <- exp(cbind(OR = coef(modelo_sede_simple),
+                        confint(modelo_sede_simple)))
+
+or_tabla <- as.data.frame(round(or_sede_s, 6))
+or_tabla$Variable    <- rownames(or_tabla)
+or_tabla$Significativo <- c("—",
+  ifelse(resumen_s$coefficients[2, 4] < 0.05, "✓ Sí (p < 0.05)", "✗ No"))
+or_tabla$Interpretacion <- c(
+  "Punto de anclaje matemático",
+  ifelse(exp(b1_s) > 1,
+         "Factor de RIESGO: mayor activa → mayor prob. de incumplir",
+         "Factor PROTECTOR: mayor activa → menor prob. de incumplir")
+)
+
+apa_table(or_tabla[, c("Variable", "OR", "2.5 %", "97.5 %",
+                       "Significativo", "Interpretacion")],
+         col.names = c("Variable", "OR", "IC 2.5%", "IC 97.5%",
+                       "Significativo", "Interpretación"),
+         caption   = "Odds Ratios — Modelo Logístico Simple (Sede)",
+         align     = c("l", "r", "r", "r", "c", "l"))
+```
+
+## Curva Logística Ajustada
+
+```{r curva_logistica_sede, fig.width=9, fig.height=5}
+rango_activa <- data.frame(
+  Activa_Total = seq(min(dt_sede$Activa_Total, na.rm = TRUE),
+                     max(dt_sede$Activa_Total, na.rm = TRUE),
+                     length.out = 300)
+)
+rango_activa$Prob <- predict(modelo_sede_simple,
+                              newdata = rango_activa, type = "response")
+
+ggplot() +
+  geom_jitter(data = dt_sede,
+              aes(x = Activa_Total / 1000, y = Sede_Incumple,
+                  color = factor(Sede_Incumple)),
+              height = 0.02, alpha = 0.4, size = 1.5) +
+  geom_line(data = rango_activa,
+            aes(x = Activa_Total / 1000, y = Prob),
+            color = "#2C3E50", linewidth = 1.4) +
+  geom_hline(yintercept = 0.5, color = "#E74C3C",
+             linetype = "dashed", linewidth = 0.8) +
+  scale_color_manual(values = c("0" = "#27AE60", "1" = "#E74C3C"),
+                     labels = c("0" = "Cumple", "1" = "Incumple"),
+                     name   = "Estado real") +
+  labs(
+    title    = "Curva Logística: Activa_Total → Probabilidad de Incumplimiento",
+    subtitle = paste0("Línea discontinua roja: umbral de decisión p = 0.5",
+                     " | Nota: el modelo se ajustó con Activa_Total en kWh;",
+                     " el eje X se muestra en MWh para legibilidad"),
+    x        = "Energía Activa Total Sede (miles de kWh)",
+    y        = "P(Sede Incumple)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", color = "#2C3E50"),
+        legend.position = "bottom")
+```
+
+## Matriz de Confusión y Métricas
+
+```{r matriz_simple_sede, fig.width=6, fig.height=5}
+prob_s   <- predict(modelo_sede_simple, type = "response")
+pred_s   <- ifelse(prob_s > 0.5, 1, 0)
+mc_s     <- table(Prediccion = pred_s, Real = dt_sede$Sede_Incumple)
+
+VN_s <- mc_s["0", "0"]; FN_s <- mc_s["0", "1"]
+FP_s <- mc_s["1", "0"]; VP_s <- mc_s["1", "1"]
+
+acc_s  <- (VP_s + VN_s) / sum(mc_s)
+sens_s <- VP_s / (VP_s + FN_s)
+esp_s  <- VN_s / (VN_s + FP_s)
+
+# ── Gráfico: Matriz de Confusión estilo heatmap ──────────────────────────────
+datos_mc_s <- data.frame(
+  Predicho   = factor(c("Cumple (0)", "Incumple (1)", "Cumple (0)", "Incumple (1)"),
+                      levels = c("Cumple (0)", "Incumple (1)")),
+  Real       = factor(c("Cumple (0)", "Cumple (0)", "Incumple (1)", "Incumple (1)"),
+                      levels = c("Incumple (1)", "Cumple (0)")),
+  Frecuencia = c(VN_s, FP_s, FN_s, VP_s)
+)
+
+ggplot(datos_mc_s, aes(x = Predicho, y = Real, fill = Frecuencia)) +
+  geom_tile(color = "black", linewidth = 1) +
+  geom_text(aes(label = Frecuencia), size = 8, fontface = "bold") +
+  scale_fill_gradient(low = "white", high = "#E74C3C") +
+  labs(title    = "Matriz de Confusión: Modelo Logístico Simple — Sede",
+       subtitle = paste0("Evaluación empírica sobre n = ", sum(mc_s), " períodos"),
+       x        = "Predicción del Modelo",
+       y        = "Realidad (Observada)") +
+  theme_minimal() +
+  theme(axis.text  = element_text(size = 12, face = "bold"),
+        title      = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+```
+
+```{r metricas_simple_sede}
+metricas_s <- data.frame(
+  Métrica = c("Exactitud global (Accuracy)",
+              "Sensibilidad (Recall — detectar incumplimientos)",
+              "Especificidad (descartar cumplimientos)"),
+  Valor   = paste0(round(c(acc_s, sens_s, esp_s) * 100, 2), "%"),
+  Interpretacion = c(
+    "Proporción total de clasificaciones correctas",
+    "De todos los meses que SÍ hubo incumplimiento, ¿cuántos detectó el modelo?",
+    "De todos los meses donde se cumplió la norma, ¿cuántos identificó correctamente?"
+  )
+)
+
+apa_table(metricas_s,
+         col.names = c("Métrica", "Valor", "Interpretación"),
+         caption   = "Métricas de Desempeño — Modelo Simple Sede",
+         align     = c("l", "r", "l"))
+```
+
+---
+
+# Modelo Logístico Múltiple — Nivel Sede
+
+Se incorpora `Vacaciones` como covariable dicotómica para evaluar si los meses de receso académico (Enero, Junio, Julio y Diciembre) influyen en la probabilidad de incumplimiento normativo, controlando por el nivel de consumo activo. Al ser una sola dummy, el modelo es parsimonioso y responde directamente: **¿estar en vacaciones aumenta el riesgo de incumplimiento?**
+
+$$\ln\left(\frac{P}{1-P}\right) = \beta_0 + \beta_1 \cdot Activa\_Total + \beta_2 \cdot Vacaciones$$
+
+## Estimación del Modelo
+
+```{r modelo_mult_sede}
+# ── Crear variable Vacaciones desde los datos ─────────────────────────────────
+dt_sede$Vacaciones <- ifelse(dt_sede$Mes %in% c(1, 6, 7, 12), 1L, 0L)
+
+modelo_sede_mult <- glm(Sede_Incumple ~ Activa_Total + Vacaciones,
+                         data   = dt_sede,
+                         family = binomial(link = "logit"))
+
+resumen_m <- summary(modelo_sede_mult)
+coef_m    <- coef(modelo_sede_mult)
+
+# ── Tabla de coeficientes ──────────────────────────────────────────────────────
+coef_tabla_m <- data.frame(
+  Parámetro   = c("β₀ (Intercepto)", "β₁ (Activa_Total)", "β₂ (Vacaciones)"),
+  Estimador   = round(resumen_m$coefficients[, 1], 6),
+  Error_Std   = round(resumen_m$coefficients[, 2], 6),
+  z           = round(resumen_m$coefficients[, 3], 4),
+  p_valor     = format(resumen_m$coefficients[, 4], scientific = TRUE)
+)
+
+apa_table(coef_tabla_m,
+         col.names = c("Parámetro", "Estimador", "Error Estándar", "z", "p-valor"),
+         caption   = "Coeficientes del Modelo Logístico Múltiple — Nivel Sede (Activa + Vacaciones)",
+         align     = c("l", "r", "r", "r", "r"),
+         nota      = "Vacaciones = 1 para meses de receso académico (Ene, Jun, Jul, Dic); 0 = meses de clases.")
+
+# ── Indicadores de ajuste ─────────────────────────────────────────────────────
+ajuste_m <- data.frame(
+  Indicador = c("Devianza nula", "Devianza residual", "AIC", "N observaciones"),
+  Valor     = c(round(resumen_m$null.deviance, 2),
+                round(resumen_m$deviance, 2),
+                round(resumen_m$aic, 2),
+                nrow(dt_sede))
+)
+
+apa_table(ajuste_m,
+         col.names = c("Indicador", "Valor"),
+         caption   = "Indicadores de Ajuste — Modelo Logístico Múltiple (Sede)",
+         align     = c("l", "r"))
+```
+
+## Ecuación e Interpretación
+
+```{r ecuacion_mult_sede, include=FALSE}
+# Extraer valores para uso en texto markdown
+b0_m_fmt <- formatC(coef_m[1], format = "f", digits = 4)
+b1_m_fmt <- formatC(coef_m[2], format = "f", digits = 8)
+b2_m_fmt <- formatC(coef_m[3], format = "f", digits = 4)
+signo_b2 <- ifelse(coef_m[3] < 0, "-", "+")
+b2_m_abs <- formatC(abs(coef_m[3]), format = "f", digits = 4)
+or_vac   <- formatC(exp(coef_m[3]), format = "f", digits = 4)
+p_vac    <- resumen_m$coefficients[3, 4]
+p_vac_fmt <- ifelse(p_vac < 0.001, "< 0.001", formatC(p_vac, format = "f", digits = 4))
+```
+
+::: {.callout-important title="Ecuación del Modelo Logístico Múltiple"}
+**Escala Log-Odds:**
+
+$$\ln\left(\frac{P}{1-P}\right) = `r b0_m_fmt` + `r b1_m_fmt` \cdot Activa\_Total `r signo_b2` `r b2_m_abs` \cdot Vacaciones$$
+
+**Escala de Probabilidad (Sigmoide):**
+
+$$P(Incumple) = \frac{1}{1 + e^{-(`r b0_m_fmt` + `r b1_m_fmt` \cdot Activa\_Total `r signo_b2` `r b2_m_abs` \cdot Vacaciones)}}$$
+
+**Interpretación de los coeficientes:**
+
+- $\hat{\beta}_1$ = `r b1_m_fmt` → Por cada kWh adicional de energía activa total, el log-odds de incumplimiento cambia en `r b1_m_fmt` unidades, manteniendo constante el estado de vacaciones.
+- $\hat{\beta}_2$ = `r b2_m_fmt` (p = `r p_vac_fmt`) → Los meses de vacaciones (Ene, Jun, Jul, Dic) `r ifelse(coef_m[3] > 0, "**aumentan**", "**reducen**")` el log-odds de incumplimiento en `r b2_m_abs` unidades respecto a los meses de clases. En términos de **Odds Ratio**: $OR = e^{`r b2_m_fmt`} = `r or_vac`$ — `r ifelse(exp(coef_m[3]) > 1, "el riesgo de incumplimiento es mayor en vacaciones.", "el riesgo de incumplimiento es menor en vacaciones.")`
+:::
+
+```{r or_mult_sede}
+or_mult <- exp(cbind(OR = coef(modelo_sede_mult),
+                      confint(modelo_sede_mult)))
+
+or_mult_df <- as.data.frame(round(or_mult, 4))
+or_mult_df$Variable <- c("Intercepto", "Activa_Total", "Vacaciones")
+or_mult_df$p_valor  <- round(resumen_m$coefficients[, 4], 6)
+or_mult_df$Interpretacion <- c(
+  "Punto de anclaje matemático",
+  ifelse(exp(coef_m[2]) > 1,
+    "Mayor consumo activo → mayor riesgo de incumplir (Ceteris Paribus)",
+    "Mayor consumo activo → menor riesgo de incumplir (Ceteris Paribus)"),
+  ifelse(exp(coef_m[3]) > 1,
+    "Vacaciones AUMENTAN el riesgo de incumplimiento vs. meses de clases",
+    "Vacaciones REDUCEN el riesgo de incumplimiento vs. meses de clases")
+)
+
+apa_table(or_mult_df[, c("Variable", "OR", "2.5 %", "97.5 %",
+                         "p_valor", "Interpretacion")],
+         col.names = c("Variable", "OR", "IC 2.5%", "IC 97.5%",
+                       "p-valor", "Interpretación"),
+         caption   = "Odds Ratios — Modelo Logístico Múltiple (Sede: Activa + Vacaciones)",
+         align     = c("l", "r", "r", "r", "r", "l"),
+         nota      = "Vacaciones = 1 (Ene, Jun, Jul, Dic); 0 = meses de clases. OR > 1 = mayor riesgo en vacaciones.")
+```
+
+## Comparación de Modelos por AIC — Nivel Sede
+
+```{r aic_sede}
+modelos_sede <- list(
+  "M1: ~ Activa_Total"              = glm(Sede_Incumple ~ Activa_Total,
+                                           data = dt_sede, family = "binomial"),
+  "M2: ~ Vacaciones"                = glm(Sede_Incumple ~ Vacaciones,
+                                           data = dt_sede, family = "binomial"),
+  "M3: ~ Activa_Total + Vacaciones" = modelo_sede_mult
+)
+
+tabla_aic_sede <- data.frame(
+  Modelo     = names(modelos_sede),
+  Parámetros = sapply(modelos_sede, function(m) length(coef(m))),
+  AIC        = round(sapply(modelos_sede, AIC), 2),
+  Devianza   = round(sapply(modelos_sede, function(m) m$deviance), 2)
+)
+tabla_aic_sede <- tabla_aic_sede[order(tabla_aic_sede$AIC), ]
+tabla_aic_sede$Ranking <- 1:nrow(tabla_aic_sede)
+
+apa_table(tabla_aic_sede,
+         col.names = c("Modelo", "Parámetros", "AIC", "Devianza", "Ranking"),
+         caption   = "Comparación de Modelos por AIC — Nivel Sede (menor AIC = mejor)",
+         align     = c("l", "c", "r", "r", "c"))
+```
+
+## Matriz de Confusión — Modelo Múltiple Sede
+
+```{r matriz_mult_sede, fig.width=6, fig.height=5}
+prob_m  <- predict(modelo_sede_mult, type = "response")
+pred_m  <- ifelse(prob_m > 0.5, 1, 0)
+mc_m    <- table(Prediccion = pred_m, Real = dt_sede$Sede_Incumple)
+
+VN_m <- mc_m["0","0"]; FN_m <- mc_m["0","1"]
+FP_m <- mc_m["1","0"]; VP_m <- mc_m["1","1"]
+
+acc_m  <- (VP_m + VN_m) / sum(mc_m)
+sens_m <- VP_m / (VP_m + FN_m)
+esp_m  <- VN_m / (VN_m + FP_m)
+
+# ── Gráfico: Matriz de Confusión estilo heatmap ──────────────────────────────
+datos_mc_m <- data.frame(
+  Predicho   = factor(c("Cumple (0)", "Incumple (1)", "Cumple (0)", "Incumple (1)"),
+                      levels = c("Cumple (0)", "Incumple (1)")),
+  Real       = factor(c("Cumple (0)", "Cumple (0)", "Incumple (1)", "Incumple (1)"),
+                      levels = c("Incumple (1)", "Cumple (0)")),
+  Frecuencia = c(VN_m, FP_m, FN_m, VP_m)
+)
+
+ggplot(datos_mc_m, aes(x = Predicho, y = Real, fill = Frecuencia)) +
+  geom_tile(color = "black", linewidth = 1) +
+  geom_text(aes(label = Frecuencia), size = 8, fontface = "bold") +
+  scale_fill_gradient(low = "white", high = "#E74C3C") +
+  labs(title    = "Matriz de Confusión: Modelo Logístico Múltiple — Sede",
+       subtitle = paste0("Evaluación empírica sobre n = ", sum(mc_m), " períodos"),
+       x        = "Predicción del Modelo",
+       y        = "Realidad (Observada)") +
+  theme_minimal() +
+  theme(axis.text  = element_text(size = 12, face = "bold"),
+        title      = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+```
+
+```{r comp_metricas_sede}
+comp_metricas <- data.frame(
+  Métrica        = c("Accuracy", "Sensibilidad", "Especificidad", "AIC"),
+  Modelo_Simple  = c(paste0(round(acc_s  * 100, 2), "%"),
+                     paste0(round(sens_s * 100, 2), "%"),
+                     paste0(round(esp_s  * 100, 2), "%"),
+                     round(AIC(modelo_sede_simple), 2)),
+  Modelo_Multiple = c(paste0(round(acc_m  * 100, 2), "%"),
+                      paste0(round(sens_m * 100, 2), "%"),
+                      paste0(round(esp_m  * 100, 2), "%"),
+                      round(AIC(modelo_sede_mult), 2))
+)
+
+apa_table(comp_metricas,
+         col.names = c("Métrica", "Modelo Simple", "Modelo Múltiple"),
+         caption   = "Comparación de Desempeño — Modelos Nivel Sede",
+         align     = c("l", "r", "r"))
+```
+
+---
+
+# Modelo Logístico — Impacto por Cuenta Individual sobre el Incumplimiento de Sede
+
+En las secciones anteriores se modeló el incumplimiento de sede usando el consumo activo agregado (total de las 5 cuentas). Ahora se evalúa una pregunta diferente: ¿el consumo de cuál cuenta individual es más informativo para predecir si la sede incumplirá la norma?
+
+Para responderlo se construyen modelos logísticos simples — uno por cada cuenta (`Activa` individual → `Sede_Incumple`) — y se comparan por AIC. Con los mejores predictores se arma un modelo múltiple final.
+
+## Preparación: Consumo Individual en Formato Ancho
+
+```{r prep_formato_ancho}
+library(tidyr)
+activa_wide <- dt_cuenta %>%
+  select(Tiempo, Nombre_Cuenta, Activa) %>%
+  mutate(Activa_k = Activa / 1000) %>%
+  select(Tiempo, Nombre_Cuenta, Activa_k) %>%
+  pivot_wider(
+    names_from   = Nombre_Cuenta,
+    values_from  = Activa_k,
+    names_prefix = "Activa_k_"
+  )
+
+colnames(activa_wide) <- make.names(colnames(activa_wide))
+
+dt_sede_ind <- dt_sede %>%
+  left_join(activa_wide, by = "Tiempo")
+
+nombres_activa <- grep("^Activa_k_", colnames(dt_sede_ind), value = TRUE)
+
+apa_table(
+  data.frame(
+    Variable  = nombres_activa,
+    N_validos = sapply(nombres_activa,
+                       function(v) sum(!is.na(dt_sede_ind[[v]]))),
+    Media     = round(sapply(nombres_activa,
+                             function(v) mean(dt_sede_ind[[v]], na.rm = TRUE)), 1),
+    DE        = round(sapply(nombres_activa,
+                             function(v) sd(dt_sede_ind[[v]], na.rm = TRUE)), 1)
+  ),
+  col.names = c("Variable", "N válidos", "Media (MWh)", "DE"),
+  caption   = "Descriptivos de Energía Activa Individual — Formato Ancho",
+  align     = c("l", "c", "r", "r")
+)
+```
+
+## Modelos Simples: Cada Cuenta → Sede_Incumple
+
+```{r modelos_simples_ind}
+# ── Lista de predictores candidatos ───────────────────────────────────────────
+predictores <- nombres_activa
+
+resultados_simples <- lapply(predictores, function(pred) {
+  formula_i <- as.formula(paste("Sede_Incumple ~", pred))
+  datos_i   <- dt_sede_ind[!is.na(dt_sede_ind[[pred]]), ]
+  modelo_i  <- tryCatch(
+    glm(formula_i, data = datos_i, family = binomial(link = "logit")),
+    error = function(e) NULL
+  )
+  if (is.null(modelo_i)) return(NULL)
+
+  coef_i  <- coef(modelo_i)
+  pval_i  <- summary(modelo_i)$coefficients[2, 4]
+  or_i    <- exp(coef_i[2])
+  aic_i   <- AIC(modelo_i)
+  n_i     <- nrow(datos_i)
+
+  data.frame(
+    Predictor = pred,
+    N         = n_i,
+    b1        = round(coef_i[2], 7),
+    OR        = round(or_i, 4),
+    p_valor   = round(pval_i, 6),
+    AIC       = round(aic_i, 2),
+    Signif    = ifelse(pval_i < 0.05, "✓ Sí", "✗ No"),
+    Efecto    = ifelse(or_i > 1,
+                       "Mayor consumo → mayor riesgo de incumplimiento sede",
+                       "Mayor consumo → menor riesgo de incumplimiento sede")
+  )
+})
+
+tabla_simples <- do.call(rbind, resultados_simples)
+tabla_simples <- tabla_simples[order(tabla_simples$AIC), ]
+tabla_simples$Ranking <- 1:nrow(tabla_simples)
+
+apa_table(tabla_simples,
+         col.names = c("Predictor", "N", "β₁", "OR", "p-valor",
+                       "AIC", "Significativo", "Dirección del efecto", "Ranking"),
+         caption   = "Comparación de Modelos Simples — Predictor Individual → Incumplimiento Sede",
+         align     = c("l", "c", "r", "r", "r", "r", "c", "l", "c"),
+         nota      = paste0(
+           "Cada modelo es logístico simple: Sede_Incumple ~ Predictor. ",
+           "Central 3 tiene EPV = 0 (solo 24 períodos válidos); ",
+           "su resultado se reporta con fines descriptivos únicamente. ",
+           "Ordenado por AIC ascendente."))
+```
+
+Los predictores con menor AIC identifican las cuentas cuyo consumo activo individual aporta mayor información predictiva sobre el incumplimiento normativo de la sede. Estos predictores son seleccionados para construir el modelo múltiple final.
+
+**Nota metodológica — Central 3 en el modelo múltiple:** Aunque Central 3 se incluye en la tabla comparativa anterior, no se incorpora al modelo múltiple. Al combinarse con otras predictoras se detectó separación perfecta: clasificación casi determinista del incumplimiento que impide la convergencia del algoritmo de Máxima Verosimilitud (MLE), con OR = 0 o Inf, IC = [0, Inf] y p-valores de ~0.99 simultáneamente. Adicionalmente su EPV = 0 la hace inestable como predictora.
+
+## Modelo Múltiple Final — Central 2, Central 5 y Vacaciones
+
+```{r modelo_mult_final}
+# ── Filtrar períodos válidos para los dos predictores seleccionados ────────────
+dt_modelo_final <- dt_sede_ind %>%
+  filter(!is.na(Activa_k_Central.2),
+         !is.na(Activa_k_Central.5))
+cat("Períodos válidos para el modelo final:", nrow(dt_modelo_final), "\n")
+
+# Modelo A: Central 2 + Central 5
+modelo_cuentas_a <- glm(Sede_Incumple ~ Activa_k_Central.2 +
+                                        Activa_k_Central.5,
+                        data   = dt_modelo_final,
+                        family = binomial(link = "logit"))
+
+# Modelo B: Central 2 + Central 5 + Vacaciones
+modelo_cuentas_b <- glm(Sede_Incumple ~ Activa_k_Central.2 +
+                                        Activa_k_Central.5 +
+                                        Vacaciones,
+                        data   = dt_modelo_final,
+                        family = binomial(link = "logit"))
+
+resumen_s7m <- summary(modelo_cuentas_b)
+
+# ── Tabla de coeficientes ──────────────────────────────────────────────────────
+coef_tabla_f <- data.frame(
+  Parámetro = c("β₀ (Intercepto)", "Activa_k_Central.2",
+                "Activa_k_Central.5", "Vacaciones"),
+  Estimador = round(resumen_s7m$coefficients[, 1], 6),
+  Error_Std = round(resumen_s7m$coefficients[, 2], 6),
+  z         = round(resumen_s7m$coefficients[, 3], 4),
+  p_valor   = format(resumen_s7m$coefficients[, 4], scientific = TRUE)
+)
+
+apa_table(coef_tabla_f,
+         col.names = c("Parámetro", "Estimador", "Error Estándar", "z", "p-valor"),
+         caption   = "Coeficientes — Modelo Múltiple: Central 2 + Central 5 + Vacaciones",
+         align     = c("l", "r", "r", "r", "r"),
+         nota      = paste0(
+           "Categoría de referencia Vacaciones: meses de clases (0). ",
+           "Vacaciones = 1 para Enero, Junio, Julio y Diciembre."))
+
+# ── Indicadores de ajuste completos ──────────────────────────────────────────
+ajuste_s7 <- data.frame(
+  Indicador = c("Devianza nula", "GL nula",
+                "Devianza residual", "GL residual",
+                "Reducción de devianza",
+                "AIC", "N observaciones",
+                "Iteraciones Fisher Scoring"),
+  Valor = c(round(resumen_s7m$null.deviance,            2),
+            resumen_s7m$df.null,
+            round(resumen_s7m$deviance,                 2),
+            resumen_s7m$df.residual,
+            round(resumen_s7m$null.deviance -
+                  resumen_s7m$deviance,                 2),
+            round(resumen_s7m$aic,                      2),
+            nrow(dt_modelo_final),
+            resumen_s7m$iter)
+)
+
+apa_table(ajuste_s7,
+         col.names = c("Indicador", "Valor"),
+         caption   = "Indicadores de Ajuste — Modelo Múltiple Final",
+         align     = c("l", "r"))
+```
+
+### Odds Ratios — Modelo Múltiple Final
+
+```{r or_mult_final}
+or_final <- exp(cbind(OR = coef(modelo_cuentas_b),
+                       confint(modelo_cuentas_b)))
+or_final_df <- as.data.frame(round(or_final, 4))
+or_final_df$p_valor <- round(resumen_s7m$coefficients[, 4], 6)
+or_final_df$Signif  <- ifelse(or_final_df$p_valor < 0.05, "✓ Sí", "✗ No")
+rownames(or_final_df) <- c("β₀ (Intercepto)", "Activa_k_Central.2",
+                            "Activa_k_Central.5", "Vacaciones")
+
+apa_table(or_final_df[, c("OR", "2.5 %", "97.5 %", "p_valor", "Signif")],
+         col.names = c("OR", "IC 2.5%", "IC 97.5%", "p-valor", "Significativo"),
+         caption   = "Odds Ratios — Modelo Múltiple Final (Central 2 + Central 5 + Vacaciones)",
+         align     = c("r", "r", "r", "r", "c"),
+         nota      = "OR > 1 = mayor consumo/vacaciones aumenta riesgo de incumplimiento sede.")
+```
+
+### Matriz de Confusión y Métricas — Modelo Final
+
+```{r matriz_mult_final, fig.width=6, fig.height=5}
+prob_f  <- predict(modelo_cuentas_b, type = "response")
+pred_f  <- ifelse(prob_f > 0.5, 1, 0)
+real_f  <- dt_modelo_final$Sede_Incumple
+mc_f    <- table(Prediccion = pred_f, Real = real_f)
+
+VN_f <- mc_f["0","0"]; FN_f <- mc_f["0","1"]
+FP_f <- mc_f["1","0"]; VP_f <- mc_f["1","1"]
+
+acc_f  <- (VP_f + VN_f) / sum(mc_f)
+sens_f <- VP_f / (VP_f + FN_f)
+esp_f  <- VN_f / (VN_f + FP_f)
+
+datos_mc_f <- data.frame(
+  Predicho   = factor(c("Cumple (0)", "Incumple (1)",
+                         "Cumple (0)", "Incumple (1)"),
+                      levels = c("Cumple (0)", "Incumple (1)")),
+  Real       = factor(c("Cumple (0)", "Cumple (0)",
+                         "Incumple (1)", "Incumple (1)"),
+                      levels = c("Incumple (1)", "Cumple (0)")),
+  Frecuencia = c(VN_f, FP_f, FN_f, VP_f)
+)
+
+ggplot(datos_mc_f, aes(x = Predicho, y = Real, fill = Frecuencia)) +
+  geom_tile(color = "black", linewidth = 1) +
+  geom_text(aes(label = Frecuencia), size = 8, fontface = "bold") +
+  scale_fill_gradient(low = "white", high = "#E74C3C") +
+  labs(title    = "Matriz de Confusión: Modelo Múltiple Final",
+       subtitle = paste0("Evaluación sobre n = ", sum(mc_f), " períodos"),
+       x = "Predicción del Modelo",
+       y = "Realidad (Observada)") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12, face = "bold"),
+        title     = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+
+metricas_f <- data.frame(
+  Métrica = c("Exactitud global (Accuracy)",
+              "Sensibilidad (detectar incumplimientos)",
+              "Especificidad (descartar cumplimientos)"),
+  Valor   = paste0(round(c(acc_f, sens_f, esp_f) * 100, 2), "%"),
+  Interpretacion = c(
+    "Proporción total de clasificaciones correctas",
+    "De todos los meses con incumplimiento, ¿cuántos detectó el modelo?",
+    "De todos los meses donde se cumplió la norma, ¿cuántos identificó correctamente?"
+  )
+)
+
+apa_table(metricas_f,
+         col.names = c("Métrica", "Valor", "Interpretación"),
+         caption   = "Métricas de Desempeño — Modelo Múltiple Final",
+         align     = c("l", "r", "l"))
+```
+
+## Comparación Global — Todos los Modelos de Nivel Sede
+
+```{r comparacion_global}
+modelos_global <- list(
+  "M1: ~ Activa_Total"                     = modelo_sede_simple,
+  "M2: ~ Activa_Total + Vacaciones"         = modelo_sede_mult,
+  "M3: ~ Central2 + Central5"              = modelo_cuentas_a,
+  "M4: ~ Central2 + Central5 + Vacaciones" = modelo_cuentas_b
+)
+
+tabla_global <- data.frame(
+  Modelo     = names(modelos_global),
+  Parámetros = sapply(modelos_global, function(m) length(coef(m))),
+  AIC        = round(sapply(modelos_global, AIC), 2),
+  Devianza   = round(sapply(modelos_global,
+                            function(m) m$deviance), 2)
+)
+tabla_global <- tabla_global[order(tabla_global$AIC), ]
+tabla_global$Ranking <- 1:nrow(tabla_global)
+
+apa_table(tabla_global,
+         col.names = c("Modelo", "Parámetros", "AIC",
+                       "Devianza residual", "Ranking"),
+         caption   = "Comparación Global — Todos los Modelos de Nivel Sede",
+         align     = c("l", "c", "r", "r", "c"),
+         nota      = paste0(
+           "Ordenado por AIC ascendente. ",
+           "Menor AIC indica mejor balance entre ajuste y parsimonia."))
+```
+
+La comparación por AIC permite evaluar si desagregar el consumo por cuenta individual (M3 y M4) mejora la capacidad predictiva respecto al modelo basado en el consumo total de la sede (M1 y M2), y si la incorporación de Vacaciones aporta información adicional más allá del nivel de consumo activo.
+
+---
+
+# Conclusiones
+
+```{r conclusiones, echo=FALSE}
+mejor_sede  <- tabla_aic_sede$Modelo[1]
+mejor_unif  <- "M2: ~ Activa_Total + Vacaciones"
+pct_incumple_sede <- round(mean(dt_sede$Sede_Incumple) * 100, 1)
+```
+
+**1. Balance de los datos:**
+El `r pct_incumple_sede`% de los períodos registran al menos una cuenta en incumplimiento. Este balance casi perfecto (cercano a 50/50) a nivel sede evita el problema de desbalance de clases que advierte el módulo, haciendo al modelo estadísticamente confiable.
+
+**2. Modelo Simple — Nivel Sede:**
+La energía activa total `r ifelse(resumen_s$coefficients[2,4] < 0.05, "es un predictor estadísticamente significativo (p < 0.05)", "no es estadísticamente significativa (p ≥ 0.05)")` del incumplimiento normativo de la sede. El OR indica que `r ifelse(exp(b1_s) > 1, "a mayor consumo activo, mayor es la probabilidad de que alguna cuenta incumpla la norma.", "a mayor consumo activo, menor es la probabilidad de incumplimiento.")`.
+
+**3. Selección por AIC — Nivel Sede:**
+El modelo recomendado es **`r mejor_sede`** por tener el menor AIC, balanceando ajuste y parsimonia.
+
+**4. Modelo por Cuenta Individual — Impacto sobre la Sede:**
+Los modelos simples individuales de la sección 6 identifican que **Central 2** y **Central 5** son las cuentas cuyo consumo activo individual aporta mayor información predictiva sobre el incumplimiento normativo de la sede. Central 2 presenta el menor AIC individual, siendo el predictor más informativo. Central 3 fue excluida del modelo múltiple por separación perfecta y EPV = 0.
+
+**5. Modelo Múltiple Final y Valor Operativo:**
+El modelo con mejor balance entre ajuste y parsimonia a nivel sede es el modelo múltiple **Activa_Total + Vacaciones** (Sección 5). Sin embargo, el análisis de la Sección 6 demuestra que desagregar el consumo por cuenta individual mejora la capacidad predictiva: **Central 2** y **Central 5** son los predictores individuales más informativos del incumplimiento normativo. La variable **Vacaciones** confirma que los meses de receso académico (Enero, Junio, Julio y Diciembre) concentran mayor riesgo de incumplimiento, dado que las cargas inductivas permanecen energizadas sin consumo activo proporcional, elevando la relación Reactiva/Activa por encima del límite normativo de 0.48.
+
+---
+
+*Análisis desarrollado para la Universidad Surcolombiana (USCO) — Sede Central*
+*Herramienta: R `r R.version.string`*

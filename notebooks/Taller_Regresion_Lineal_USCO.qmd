@@ -1,0 +1,586 @@
+---
+title: "Taller: Modelo de Regresión Lineal"
+subtitle: "Consumo Energético – Universidad Surcolombiana (USCO) –
+  Especialización en Estadística"
+author: "Análisis Estadístico"
+date: "2026-04-11"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Contenido"
+    theme: cerulean
+    css: usco_theme.css
+    highlight-style: tango
+    number-sections: true
+    df-print: paged
+    code-fold: true
+    code-summary: "Ver código"
+    embed-resources: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  fig.width = 10, fig.height = 6, fig.align = "center"
+)
+
+paquetes <- c("ggplot2", "lmtest", "nortest", "car", "MASS",
+              "knitr", "kableExtra", "gridExtra")
+nuevos <- paquetes[!(paquetes %in% installed.packages()[, "Package"])]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cran.r-project.org")
+
+library(ggplot2)
+library(lmtest)
+library(nortest)
+library(car)
+library(MASS)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+```
+
+---
+
+# Descripción del Problema e Hipótesis
+
+La Universidad Surcolombiana (USCO) registra mensualmente su consumo eléctrico desde el año 2000. Cada registro corresponde a la **sumatoria de todas las cuentas** activas de energía en un periodo dado. El dataset contiene dos tipos de energía:
+
+- **Energía Activa (kWh):** Es la energía que realmente se consume y transforma en trabajo útil (iluminación, motores, equipos de cómputo).
+- **Energía Reactiva (kVArh):** Es la energía que circula entre la fuente y las cargas inductivas (transformadores, motores, aires acondicionados) sin realizar trabajo útil, pero necesaria para mantener los campos electromagnéticos.
+
+La relación entre ellas determina el **Factor de Potencia**. La normativa eléctrica colombiana establece que la relación `Reactiva / Activa` **no debe superar 0.48**. Si la relación es mayor, la universidad incurre en penalizaciones económicas.
+
+::: {.callout-note title="Hipótesis Principal"}
+*"El consumo de energía reactiva en la USCO puede ser explicado y predicho a partir del consumo de energía activa y del número de cuentas con consumo reactivo."*
+:::
+
+**Hipótesis Estadísticas (Regresión Simple):**
+
+- $H_0: \beta_1 = 0$ → La energía activa NO tiene efecto lineal significativo sobre la energía reactiva.
+- $H_1: \beta_1 \neq 0$ → La energía activa SÍ tiene un efecto lineal significativo sobre la energía reactiva.
+
+---
+
+# Carga de Datos y Descripción de Variables
+
+```{r carga_datos}
+# Cargar y filtrar datos con consumo real
+dt <- read.csv("C:/Users/ESTUDIANTES/Documents/Working Holydays/Consumo_Final.csv",
+               header = TRUE, sep = ",")
+dt <- dt[dt$Relacion > 0, ]
+
+# Variables para regresión
+x <- dt$Activa
+y <- dt$Reactiva
+
+# Formato auxiliar
+fmt <- function(x, dec = 0) {
+  formatC(round(x, dec), format = "f", digits = dec, big.mark = ".", decimal.mark = ",")
+}
+
+# Tabla resumen del dataset
+tabla_resumen <- data.frame(
+  Parámetro = c("Registros válidos", "Período de análisis",
+                "Media Energía Activa (kWh)", "Media Energía Reactiva (kVArh)",
+                "Desv. Est. Activa", "Desv. Est. Reactiva"),
+  Valor = c(
+    fmt(nrow(dt)),
+    paste(min(dt$Ano), "–", max(dt$Ano)),
+    fmt(mean(x)), fmt(mean(y)),
+    fmt(sd(x)), fmt(sd(y))
+  )
+)
+
+kable(tabla_resumen, col.names = c("Parámetro", "Valor"),
+      caption = "Resumen General del Dataset",
+      align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+```
+
+```{r tabla_variables}
+tabla_vars <- data.frame(
+  Variable = c("Activa", "Reactiva", "Relacion", "Cant_Cuentas",
+               "Cuentas_Reactiva", "Ano / Mes"),
+  Tipo = c("Numérica continua", "Numérica continua", "Numérica continua",
+           "Numérica discreta", "Numérica discreta", "Numérica"),
+  Rol = c("Independiente (X₁)", "**Dependiente (Y)**", "Control",
+          "Independiente (X₂)", "Independiente (X₃)", "Temporal"),
+  Descripción = c(
+    "Energía activa mensual total (kWh)",
+    "Energía reactiva mensual total (kVArh)",
+    "Razón Reactiva/Activa (límite: 0.48)",
+    "Total de cuentas eléctricas activas",
+    "Número de cuentas con consumo reactivo",
+    "Año y mes del registro"
+  )
+)
+
+kable(tabla_vars, col.names = c("Variable", "Tipo", "Rol en el Modelo", "Descripción"),
+      caption = "Descripción de las Variables del Estudio") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+```
+
+- **Variable Dependiente ($Y$) = `Reactiva`:** Es el consumo que queremos predecir y controlar.
+- **Variable Independiente principal ($X$) = `Activa`:** A mayor actividad operativa, mayor será la energía reactiva generada.
+
+---
+
+# Análisis Exploratorio y Correlación
+
+## Gráficos Exploratorios
+
+```{r exploratorio, fig.width=10, fig.height=10}
+x_k <- x / 1000
+y_k <- y / 1000
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+# Boxplots
+boxplot(x_k, main = "Distribución: Energía Activa (X)",
+        col = "#85C1E9", ylab = "Miles de kWh", border = "#1A5276")
+boxplot(y_k, main = "Distribución: Energía Reactiva (Y)",
+        col = "#82E0AA", ylab = "Miles de kVArh", border = "#1D8348")
+
+# Diagrama de dispersión
+plot(x_k, y_k,
+     main = "Dispersión: Activa vs. Reactiva",
+     xlab = "Energía Activa (miles kWh)", ylab = "Energía Reactiva (miles kVArh)",
+     col = "#2980B9", pch = 19, cex = 0.8)
+abline(lm(y_k ~ x_k), col = "#E74C3C", lwd = 2)
+lines(lowess(x_k, y_k), col = "#27AE60", lwd = 2, lty = 2)
+legend("topleft", legend = c("OLS", "LOWESS"),
+       col = c("#E74C3C", "#27AE60"), lwd = 2, lty = c(1, 2), bty = "n", cex = 0.8)
+
+# Q-Q Plot de variable Y
+qqnorm(y, main = "Q-Q Plot: Energía Reactiva (Y)",
+       col = "#27AE60", pch = 19, cex = 0.6)
+qqline(y, col = "#E74C3C", lwd = 2)
+
+par(mfrow = c(1, 1))
+```
+
+Los boxplots muestran la distribución individual de cada variable; la mediana desplazada indica posible asimetría positiva. El diagrama de dispersión muestra una **tendencia lineal positiva clara**: a mayor consumo de energía activa, mayor es el consumo de energía reactiva. La línea LOWESS sigue de cerca la recta OLS, confirmando linealidad.
+
+## Prueba de Normalidad y Coeficientes de Correlación
+
+```{r correlacion}
+# --- Normalidad (Shapiro-Wilk) ---
+n <- nrow(dt)
+if(n <= 5000) {
+  sw_x <- shapiro.test(x)
+  sw_y <- shapiro.test(y)
+} else {
+  set.seed(42)
+  muestra <- sample(1:n, 5000)
+  sw_x <- shapiro.test(x[muestra])
+  sw_y <- shapiro.test(y[muestra])
+}
+
+tabla_normalidad <- data.frame(
+  Variable = c("Activa (X)", "Reactiva (Y)"),
+  W = c(round(sw_x$statistic, 4), round(sw_y$statistic, 4)),
+  `p-valor` = c(round(sw_x$p.value, 6), round(sw_y$p.value, 6)),
+  Resultado = c(
+    ifelse(sw_x$p.value > 0.05, "Normal", "No Normal"),
+    ifelse(sw_y$p.value > 0.05, "Normal", "No Normal")
+  )
+)
+
+kable(tabla_normalidad,
+      col.names = c("Variable", "W", "p-valor", "Resultado"),
+      caption = "Prueba de Normalidad — Shapiro-Wilk") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+
+# --- Coeficientes de Correlación ---
+r_pearson  <- cor(x, y, method = "pearson")
+r_spearman <- cor(x, y, method = "spearman")
+r_kendall  <- cor(x, y, method = "kendall")
+
+interpretar_r <- function(r) {
+  r_abs <- abs(r)
+  dir   <- ifelse(r > 0, "positiva", "negativa")
+  if(r_abs > 0.7)      paste0("FUERTE ", dir)
+  else if(r_abs > 0.4) paste0("MODERADA ", dir)
+  else if(r_abs > 0.0) paste0("DÉBIL ", dir)
+  else                  "Sin correlación lineal"
+}
+
+test_cor <- cor.test(x, y, method = "pearson")
+
+tabla_cor <- data.frame(
+  Método = c("Pearson (r)", "Spearman (ρ)", "Kendall (τ)"),
+  Coeficiente = c(round(r_pearson, 4), round(r_spearman, 4), round(r_kendall, 4)),
+  `R²` = c(paste0(round(r_pearson^2 * 100, 2), "%"), "—", "—"),
+  Interpretación = c(interpretar_r(r_pearson),
+                      interpretar_r(r_spearman),
+                      interpretar_r(r_kendall))
+)
+
+kable(tabla_cor,
+      col.names = c("Método", "Coeficiente", "R²", "Interpretación"),
+      caption = "Coeficientes de Correlación — Activa vs. Reactiva") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+```
+
+::: {.callout-tip title="Prueba de Significancia (Pearson)"}
+- **t** = `r round(test_cor$statistic, 4)` | **p-valor** = `r format(test_cor$p.value, scientific = TRUE)`
+- **IC 95%**: [`r round(test_cor$conf.int[1], 4)`, `r round(test_cor$conf.int[2], 4)`]
+- **Conclusión:** `r ifelse(test_cor$p.value < 0.05, "Correlación estadísticamente SIGNIFICATIVA.", "Correlación no significativa.")`
+:::
+
+---
+
+# Modelo de Regresión Lineal Simple
+
+**Variable Independiente ($X$):** Energía Activa (kWh) — **Variable Dependiente ($Y$):** Energía Reactiva (kVArh)
+
+## Ecuación e Indicadores del Modelo
+
+```{r modelo_simple}
+# Ajuste del modelo
+modelo_simple <- lm(Reactiva ~ Activa, data = dt)
+resumen <- summary(modelo_simple)
+b0 <- coef(modelo_simple)[1]
+b1 <- coef(modelo_simple)[2]
+
+# Indicadores
+r2     <- resumen$r.squared
+r2_adj <- resumen$adj.r.squared
+f_stat <- resumen$fstatistic
+p_f    <- pf(f_stat[1], f_stat[2], f_stat[3], lower.tail = FALSE)
+rmse   <- sqrt(mean(residuals(modelo_simple)^2))
+
+# Tabla de coeficientes
+coef_tabla <- data.frame(
+  Parámetro = c("β₀ (Intercepto)", "β₁ (Pendiente: Activa)"),
+  Estimador = c(round(b0, 4), round(b1, 6)),
+  `Error Estándar` = round(resumen$coefficients[, 2], 4),
+  `Estadístico t` = round(resumen$coefficients[, 3], 4),
+  `p-valor` = format(resumen$coefficients[, 4], scientific = TRUE)
+)
+
+kable(coef_tabla,
+      col.names = c("Parámetro", "Estimador", "Error Estándar", "t", "p-valor"),
+      caption = "Coeficientes del Modelo de Regresión Lineal Simple") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+
+# Tabla de indicadores del modelo
+tabla_ajuste <- data.frame(
+  Indicador = c("R", "R²", "R² Ajustado", "F-estadístico", "p-valor (F)", "RMSE", "AIC", "BIC"),
+  Valor = c(
+    round(sqrt(r2), 4),
+    round(r2, 4),
+    round(r2_adj, 4),
+    round(f_stat[1], 2),
+    format(p_f, scientific = TRUE),
+    round(rmse, 2),
+    round(AIC(modelo_simple), 2),
+    round(BIC(modelo_simple), 2)
+  )
+)
+
+kable(tabla_ajuste,
+      col.names = c("Indicador", "Valor"),
+      caption = "Bondad de Ajuste del Modelo Simple",
+      align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+```
+
+::: {.callout-important title="Ecuación del Modelo"}
+$$\hat{Y} = `r round(b0, 4)` + `r round(b1, 6)` \cdot X$$
+Por cada kWh adicional de energía activa, la reactiva aumenta en promedio `r round(b1, 6)` kVArh. Por cada 1.000 kWh activos → +`r round(b1 * 1000, 2)` kVArh reactivos.
+:::
+
+## Diagrama de Regresión
+
+```{r grafico_regresion, fig.width=9, fig.height=6}
+ggplot(dt, aes(x = Activa/1000, y = Reactiva/1000)) +
+  geom_point(color = "#2980B9", alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", color = "#E74C3C", se = TRUE,
+              fill = "#FADBD8", linewidth = 1.2) +
+  labs(
+    title = "Regresión Lineal Simple: Energía Activa → Energía Reactiva",
+    subtitle = paste0("Ŷ = ", round(b0/1000, 2), " + ", round(b1, 4),
+                      "·X   |   R² = ", round(r2, 4)),
+    x = "Energía Activa (miles de kWh)",
+    y = "Energía Reactiva (miles de kVArh)",
+    caption = "Universidad Surcolombiana | Consumo mensual 2000–2025"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", color = "#2C3E50"),
+    plot.subtitle = element_text(color = "#555555"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# Verificación de Supuestos de Gauss-Markov
+
+Para que los estimadores OLS sean **BLUE** (Best Linear Unbiased Estimator), los residuos deben cumplir cinco supuestos fundamentales:
+
+1. **Linealidad:** $E(Y|X) = \beta_0 + \beta_1 X$
+2. **Media cero del error:** $E(\varepsilon_i) = 0$
+3. **Homocedasticidad:** $Var(\varepsilon_i) = \sigma^2$ (constante)
+4. **Independencia:** $Cov(\varepsilon_i, \varepsilon_j) = 0$
+5. **Normalidad:** $\varepsilon_i \sim N(0, \sigma^2)$
+
+```{r supuestos_tabla}
+# Calcular todas las pruebas de supuestos
+res <- residuals(modelo_simple)
+
+# 1. Media cero
+t_test_res <- t.test(res, mu = 0)
+
+# 2. Homocedasticidad (Breusch-Pagan)
+bp_test <- bptest(modelo_simple)
+
+# 3. Independencia (Durbin-Watson)
+dw_test <- dwtest(modelo_simple)
+
+# 4. Normalidad (Shapiro-Wilk)
+if(length(res) <= 5000) {
+  sw_res <- shapiro.test(res)
+} else {
+  set.seed(42)
+  sw_res <- shapiro.test(sample(res, 5000))
+}
+
+# Tabla de resultados (al nivel superior del chunk → Quarto la renderiza)
+tabla_sup <- data.frame(
+  Supuesto = c("Linealidad", "Media cero del error",
+               "Homocedasticidad", "Independencia", "Normalidad de residuos"),
+  Prueba = c("Inspección visual", "Prueba t (μ = 0)",
+             "Breusch-Pagan", "Durbin-Watson", "Shapiro-Wilk"),
+  Estadístico = c(
+    "Ver gráfico",
+    paste0("t = ", round(t_test_res$statistic, 4)),
+    paste0("BP = ", round(bp_test$statistic, 4)),
+    paste0("DW = ", round(dw_test$statistic, 4)),
+    paste0("W = ", round(sw_res$statistic, 4))
+  ),
+  p_valor = c(
+    "—",
+    round(t_test_res$p.value, 6),
+    round(bp_test$p.value, 6),
+    round(dw_test$p.value, 6),
+    round(sw_res$p.value, 6)
+  ),
+  Resultado = c(
+    "Ver gráfico",
+    ifelse(t_test_res$p.value > 0.05, "✓ Cumple", "✗ No cumple"),
+    ifelse(bp_test$p.value > 0.05, "✓ Cumple", "✗ No cumple"),
+    ifelse(dw_test$p.value > 0.05, "✓ Cumple", "✗ No cumple"),
+    ifelse(sw_res$p.value > 0.05, "✓ Cumple", "✗ No cumple")
+  )
+)
+
+kable(tabla_sup,
+      col.names = c("Supuesto", "Prueba", "Estadístico", "p-valor", "Resultado"),
+      caption = "Verificación de Supuestos de Gauss-Markov — Modelo Simple",
+      align = c("l", "l", "r", "r", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE) %>%
+  column_spec(5, bold = TRUE)
+```
+
+```{r supuestos_graficos, fig.width=10, fig.height=5}
+# Gráficos de diagnóstico (chunk separado para evitar conflicto tabla/gráfico)
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+plot(fitted(modelo_simple), res,
+     main = "Residuos vs. Valores Ajustados",
+     xlab = "Valores Ajustados (Ŷ)", ylab = "Residuos (e)",
+     col = "#2980B9", pch = 19, cex = 0.7)
+abline(h = 0, col = "#E74C3C", lwd = 2, lty = 2)
+lines(lowess(fitted(modelo_simple), res), col = "#27AE60", lwd = 2)
+legend("topright", legend = c("e = 0", "LOWESS"),
+       col = c("#E74C3C", "#27AE60"), lty = c(2, 1), lwd = 2, bty = "n", cex = 0.8)
+
+qqnorm(res, main = "Q-Q Plot de Residuos",
+       col = "#2980B9", pch = 19, cex = 0.6)
+qqline(res, col = "#E74C3C", lwd = 2)
+
+par(mfrow = c(1, 1))
+```
+
+::: {.callout-warning title="Tratamiento de Supuestos Incumplidos"}
+- **Heterocedasticidad** → Usar errores estándar robustos (HC1 de White).
+- **Autocorrelación** → Estimador de Newey-West o MCG.
+- **No normalidad** → Considerar transformaciones (log, Box-Cox) o aumentar muestra.
+:::
+
+---
+
+# Modelo de Regresión Lineal Múltiple
+
+Se incorporan variables predictoras adicionales para mejorar la capacidad explicativa del modelo:
+
+$$Y_i = \beta_0 + \beta_1 \cdot Activa_i + \beta_2 \cdot Cuentas\_Reactiva_i + \beta_3 \cdot Cant\_Cuentas_i + \varepsilon_i$$
+
+## Ajuste y Comparación de Modelos
+
+```{r modelo_multiple}
+# Ajuste del modelo múltiple
+modelo_mult <- lm(Reactiva ~ Activa + Cuentas_Reactiva + Cant_Cuentas, data = dt)
+resumen_mult <- summary(modelo_mult)
+coef_m <- coef(modelo_mult)
+
+# Tabla de coeficientes del modelo múltiple
+coef_mult_tabla <- data.frame(
+  Parámetro = c("β₀ (Intercepto)", "β₁ (Activa)",
+                "β₂ (Cuentas_Reactiva)", "β₃ (Cant_Cuentas)"),
+  Estimador = round(resumen_mult$coefficients[, 1], 4),
+  `Error Estándar` = round(resumen_mult$coefficients[, 2], 4),
+  `Estadístico t` = round(resumen_mult$coefficients[, 3], 4),
+  `p-valor` = format(resumen_mult$coefficients[, 4], scientific = TRUE)
+)
+
+kable(coef_mult_tabla,
+      col.names = c("Parámetro", "Estimador", "Error Estándar", "t", "p-valor"),
+      caption = "Coeficientes del Modelo de Regresión Lineal Múltiple") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+
+# --- Comparación Simple vs. Múltiple ---
+r2_s  <- summary(modelo_simple)$r.squared
+r2_m  <- resumen_mult$r.squared
+r2a_s <- summary(modelo_simple)$adj.r.squared
+r2a_m <- resumen_mult$adj.r.squared
+
+tabla_comp <- data.frame(
+  Indicador = c("R²", "R² Ajustado", "AIC", "BIC", "RMSE"),
+  Simple = c(round(r2_s, 4), round(r2a_s, 4),
+             round(AIC(modelo_simple), 2), round(BIC(modelo_simple), 2),
+             round(sqrt(mean(residuals(modelo_simple)^2)), 2)),
+  Múltiple = c(round(r2_m, 4), round(r2a_m, 4),
+               round(AIC(modelo_mult), 2), round(BIC(modelo_mult), 2),
+               round(sqrt(mean(residuals(modelo_mult)^2)), 2))
+)
+
+kable(tabla_comp,
+      col.names = c("Indicador", "Modelo Simple", "Modelo Múltiple"),
+      caption = "Comparación de Modelos: Simple vs. Múltiple",
+      align = c("l", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+
+# --- Multicolinealidad (VIF) ---
+vif_vals <- vif(modelo_mult)
+tabla_vif <- data.frame(
+  Variable = names(vif_vals),
+  VIF = round(vif_vals, 4),
+  Resultado = ifelse(vif_vals > 10, "⚠ Multicolinealidad severa", "✓ Aceptable")
+)
+
+kable(tabla_vif,
+      col.names = c("Variable", "VIF", "Diagnóstico"),
+      caption = "Factor de Inflación de la Varianza (VIF) — Criterio: VIF > 10",
+      align = c("l", "r", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE)
+```
+
+## Predichos vs. Reales
+
+```{r grafico_predichos, fig.width=10, fig.height=5}
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+plot(fitted(modelo_simple)/1000, dt$Reactiva/1000,
+     main = "Modelo Simple: Predichos vs. Reales",
+     xlab = "Predichos (miles kVArh)", ylab = "Reales (miles kVArh)",
+     col = "#2980B9", pch = 19, cex = 0.7)
+abline(a = 0, b = 1, col = "#E74C3C", lwd = 2, lty = 2)
+
+plot(fitted(modelo_mult)/1000, dt$Reactiva/1000,
+     main = "Modelo Múltiple: Predichos vs. Reales",
+     xlab = "Predichos (miles kVArh)", ylab = "Reales (miles kVArh)",
+     col = "#27AE60", pch = 19, cex = 0.7)
+abline(a = 0, b = 1, col = "#E74C3C", lwd = 2, lty = 2)
+par(mfrow = c(1, 1))
+```
+
+---
+
+# Selección del Modelo — Criterio AIC
+
+El **Criterio de Información de Akaike (AIC)** permite comparar modelos penalizando la complejidad:
+
+$$AIC = 2k - 2\ln(\hat{L})$$
+
+Donde $k$ es el número de parámetros y $\hat{L}$ es la verosimilitud maximizada. El modelo con **menor AIC es preferible**.
+
+```{r seleccion_aic}
+# Selección automática por stepwise (AIC)
+modelo_full <- lm(Reactiva ~ Activa + Cuentas_Reactiva + Cant_Cuentas, data = dt)
+modelo_step <- stepAIC(modelo_full, direction = "both", trace = FALSE)
+
+# Modelos candidatos
+modelos <- list(
+  "M1: ~ Activa"                                     = lm(Reactiva ~ Activa, data = dt),
+  "M2: ~ Activa + Cuentas_Reactiva"                  = lm(Reactiva ~ Activa + Cuentas_Reactiva, data = dt),
+  "M3: ~ Activa + Cuentas_Reactiva + Cant_Cuentas"   = lm(Reactiva ~ Activa + Cuentas_Reactiva + Cant_Cuentas, data = dt)
+)
+
+tabla_aic <- data.frame(
+  Modelo = names(modelos),
+  R2     = round(sapply(modelos, function(m) summary(m)$r.squared), 4),
+  R2_Adj = round(sapply(modelos, function(m) summary(m)$adj.r.squared), 4),
+  AIC    = round(sapply(modelos, AIC), 2),
+  BIC    = round(sapply(modelos, BIC), 2),
+  RMSE   = round(sapply(modelos, function(m) sqrt(mean(residuals(m)^2))), 2)
+)
+tabla_aic <- tabla_aic[order(tabla_aic$AIC), ]
+
+kable(tabla_aic,
+      col.names = c("Modelo", "R²", "R² Ajustado", "AIC", "BIC", "RMSE"),
+      caption = "Comparación de Modelos por AIC (ordenado de menor a mayor)",
+      row.names = FALSE,
+      align = c("l", "r", "r", "r", "r", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#8F141B", color = "white", bold = TRUE) %>%
+  row_spec(1, bold = TRUE, background = "#e8f5e9")
+```
+
+::: {.callout-tip title="Modelo Recomendado"}
+El modelo seleccionado por stepwise AIC es: **`r deparse(formula(modelo_step))`** con AIC = `r round(AIC(modelo_step), 2)` y R² = `r round(summary(modelo_step)$r.squared, 4)`.
+:::
+
+---
+
+# Conclusiones
+
+```{r conclusiones, echo=FALSE}
+mejor_aic <- min(sapply(modelos, AIC))
+pct_cumple <- round(table(dt$Cumple)["Sí"] / nrow(dt) * 100, 2)
+```
+
+**1. Correlación:** La correlación de Pearson entre Energía Activa y Reactiva es $r$ = `r round(r_pearson, 4)` ($R^2$ = `r round(r_pearson^2 * 100, 2)`%), lo que indica una correlación **`r interpretar_r(r_pearson)`**. El `r round(r_pearson^2 * 100, 2)`% de la variabilidad en la energía reactiva es explicada por la energía activa.
+
+**2. Modelo Simple:** La ecuación estimada es $\hat{Y}$ = `r round(b0, 4)` + `r round(b1, 6)` · Activa, con un $R^2$ = `r round(r2, 4)` (`r round(r2 * 100, 2)`% de variabilidad explicada). Por cada kWh adicional de energía activa, la energía reactiva aumenta en `r round(b1, 6)` kVArh.
+
+**3. Modelo Múltiple:** La inclusión de `Cuentas_Reactiva` y `Cant_Cuentas` mejora el ajuste a un $R^2$ = `r round(r2_m, 4)` (`r round(r2_m * 100, 2)`% de variabilidad explicada).
+
+**4. Selección AIC:** El modelo con menor AIC (`r round(mejor_aic, 2)`) es el recomendado, balanceando bondad de ajuste y parsimonia.
+
+**5. Cumplimiento Normativo:** El `r pct_cumple`% de los períodos registrados cumplen con la relación Reactiva/Activa ≤ 0.48 exigida por la normativa eléctrica colombiana.
+
+---
+
+*Análisis desarrollado para la Universidad Surcolombiana (USCO) – Consumo Energético 2000-2025*
+*Herramienta: R `r R.version.string`*
