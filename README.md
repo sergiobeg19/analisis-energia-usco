@@ -28,6 +28,7 @@ analisis-energia-usco/
 │   ├── Taller_Regresion_Lineal_USCO.qmd     # Código fuente — Regresión Lineal
 │   └── Taller_Regresion_Logistica.qmd       # Código fuente — Regresión Logística
 ├── docs/
+│   ├── Anteproyecto.docx                    # Anteproyecto del trabajo de grado
 │   ├── diccionario_datos.md                  # Diccionario de variables
 │   ├── Taller_Regresion_Lineal_USCO.html    # Reporte renderizado
 │   └── Taller_Regresion_Logistica.html      # Reporte renderizado
@@ -68,8 +69,9 @@ analisis-energia-usco/
 
 Consulta el [Diccionario de Datos](docs/diccionario_datos.md) para la descripción completa de cada variable.
 
-## 📄 Reportes
+## 📄 Documentos y Reportes
 
+- [Anteproyecto](docs/Anteproyecto.docx) — Anteproyecto del trabajo de grado
 - [Regresión Lineal](docs/Taller_Regresion_Lineal_USCO.html) — Activa → Reactiva (modelo simple y múltiple)
 - [Regresión Logística](docs/Taller_Regresion_Logistica.html) — Predicción de incumplimiento normativo
 
