@@ -16,6 +16,7 @@ analisis-energia-usco/
 ├── data/
 │   ├── raw/                          # Datos crudos (fuentes originales)
 │   │   ├── Consumo_Cuentas_.xlsx     # Consumo por cuenta y tipo de energía
+│   │   ├── Datos_Temperatura_Media.xlsx # Registros de temperatura media mensual
 │   │   └── Pago_Cuentas.xls          # Pagos por cuenta y período
 │   └── processed/                    # Datos procesados (generados por scripts)
 │       ├── Consumo_Central.csv/.xlsx  # Tabla 1: cuenta × período (Sede Central)
