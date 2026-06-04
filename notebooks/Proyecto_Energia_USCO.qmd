@@ -1,0 +1,539 @@
+---
+title: "Análisis estadístico, pronóstico y detección de anomalías del consumo eléctrico y del factor de potencia en la Sede Central de la Universidad Surcolombiana"
+subtitle: "Cuantificación del incumplimiento normativo e impacto económico de la energía reactiva (2001–2025)"
+author:
+  - name: "Sergio Andrés Beltrán González"
+    id: "1077866726"
+  - name: "Juan Pablo Donato"
+    id: "1007778776"
+date: today
+date-format: "DD [de] MMMM [de] YYYY"
+lang: es
+
+format:
+  html:
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    toc-location: left
+    toc-title: "Contenido"
+    theme: cerulean
+    css: usco_apa.css
+    highlight-style: tango
+    number-sections: true
+    df-print: paged
+    code-fold: true
+    code-summary: "Ver código"
+    embed-resources: true
+    self-contained: true
+
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 6,
+  fig.align  = "center"
+)
+
+paquetes <- c("ggplot2", "dplyr", "knitr", "kableExtra", "scales",
+              "readr", "tidyr", "lubridate", "forecast", "tseries",
+              "urca", "strucchange", "FinTS", "here", "patchwork",
+              "tsibble", "feasts", "fable", "fabletools")
+nuevos <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cran.r-project.org")
+
+invisible(lapply(paquetes, library, character.only = TRUE))
+
+# ── Función auxiliar: tabla estilo APA ────────────────────────────────────────
+apa_table <- function(df, col.names = names(df), caption = NULL, nota = NULL,
+                      align = NULL, ...) {
+  t <- kable(df, col.names = col.names, caption = caption,
+             align = align, row.names = FALSE, ...) |>
+    kable_styling(
+      bootstrap_options = c("condensed"),
+      full_width        = FALSE,
+      position          = "left",
+      html_font         = '"Times New Roman", Times, serif'
+    ) |>
+    row_spec(0, bold = TRUE,
+             extra_css = "border-top: 2px solid #000; border-bottom: 1px solid #000;") |>
+    row_spec(nrow(df), extra_css = "border-bottom: 2px solid #000;")
+  if (!is.null(nota)) {
+    t <- t |> footnote(general = nota, general_title = "Nota.",
+                       footnote_as_chunk = TRUE,
+                       title_format      = c("italic"))
+  }
+  t
+}
+
+# ── Parámetros globales del proyecto ─────────────────────────────────────────
+UMBRAL_FP   <- 0.4843   # Umbral normativo R/A según CREG 015/2018
+RUTA_DATOS  <- here("data", "processed")
+RUTA_PLOTS  <- here("data", "processed", "plots")
+```
+
+---
+
+# Introducción y contexto normativo
+
+## Descripción del problema
+
+La Sede Central de la Universidad Surcolombiana (USCO), ubicada en Neiva (Huila), cuenta con cinco cuentas eléctricas activas denominadas Central 1 a Central 5. El consumo eléctrico institucional incluye tanto energía activa (kWh) como energía reactiva (kVArh), cuya relación determina el factor de potencia del sistema.
+
+La normativa eléctrica colombiana establece que el factor de potencia de los usuarios del Sistema Interconectado Nacional (SIN) no debe ser inferior a 0.90 en ningún punto de medición. Esta condición equivale a que la relación entre energía reactiva y energía activa (R/A) no supere el umbral de **0.4843** (equivalente a $\tan(\arccos(0.90))$).
+
+::: {.callout-note title="Marco normativo aplicable"}
+**Resolución CREG 015 de 2018** — Establece el cargo por transporte de energía reactiva (CTER) para usuarios que incumplan el umbral de factor de potencia.
+
+**Resolución CREG 199 de 2019** — Complementa y define la gradualidad del factor multiplicador *M* por reincidencia en el incumplimiento.
+
+**Fórmula general del CTER:**
+
+$$CTER = (Exceso\; E_{R,ind} + E_{R,cap}) \times D \times M$$
+
+Donde:
+
+- $D$: cargo por distribución según nivel de tensión (COP/kVArh)
+- $M$: factor multiplicador por reincidencia (escala de 1 a 12)
+:::
+
+## Objetivos específicos
+
+| # | Objetivo |
+|---|----------|
+| 1 | Consolidar, depurar y armonizar la base de datos mensual por cuenta (2001–2025) |
+| 2 | Caracterizar el comportamiento temporal del consumo a nivel agregado y desagregado por cuenta |
+| 3 | Construir y validar modelos de pronóstico ARIMA/SARIMA/SARIMAX y benchmarks ML |
+| 4 | Diseñar esquema multicapa de detección de anomalías de bajo factor de potencia |
+| 5 | Estimar el exceso de energía reactiva por cuenta y su costo potencial (CTER) |
+
+---
+
+# Datos y decisiones metodológicas
+
+> **Esta sección registra formalmente todas las decisiones tomadas durante el proceso de análisis. Cada decisión incluye su justificación técnica y el criterio aplicado.**
+
+## Fuente y estructura de los datos
+
+```{r carga_datos}
+# Cargar serie de 33 meses (oct 2022 – jul 2025)
+# DECISIÓN: se usa Resumen_Sede_2022.csv y Central_2022.csv generados por script 03
+# Ver sección 2.3 para justificación de la ventana temporal
+df <- read_csv(file.path(RUTA_DATOS, "Resumen_Sede_2022.csv"), show_col_types = FALSE)
+df_central <- read_csv(file.path(RUTA_DATOS, "Central_2022.csv"), show_col_types = FALSE)
+
+resumen_carga <- data.frame(
+  Concepto = c("Períodos en la ventana de análisis",
+               "Fecha inicio", "Fecha fin",
+               "Cuentas activas",
+               "Umbral normativo R/A"),
+  Valor = c(as.character(nrow(df)),
+            paste(min(df$Ano), formatC(min(df$Mes[df$Ano == min(df$Ano)]),
+                                       width = 2, flag = "0"), sep = "-"),
+            paste(max(df$Ano), formatC(max(df$Mes[df$Ano == max(df$Ano)]),
+                                       width = 2, flag = "0"), sep = "-"),
+            as.character(length(unique(df_central$Cuenta))),
+            as.character(UMBRAL_FP))
+)
+
+apa_table(resumen_carga,
+          col.names = c("Concepto", "Valor"),
+          caption   = "Tabla 1. Resumen de los datos de la ventana de análisis",
+          align     = c("l", "r"))
+```
+
+## Decisiones de depuración y armonización
+
+::: {.callout-important title="DECISIÓN 1 — Umbral normativo unificado"}
+**Criterio aplicado:** R/A ≤ 0.4843 (equivalente a FP ≥ 0.90)
+
+**Justificación:** El anteproyecto establecía el umbral en 0.485. Los scripts de limpieza previos (01 y 02) usaban 0.48. Se unifica al valor exacto derivado de la norma CREG: $\tan(\arccos(0.90)) = 0.4843$.
+
+**Impacto:** Recálculo de la variable `Cumple` y `Excedente` en todos los archivos procesados.
+:::
+
+::: {.callout-important title="DECISIÓN 2 — Ventana temporal de 33 meses"}
+**Criterio aplicado:** Octubre 2022 (período 257) a julio 2025 (período 290).
+
+**Justificación:**
+
+- La pandemia COVID-19 inició en marzo 2020 (período 226), generando un cierre total del campus. El campus operó en modalidad mínima hasta febrero 2022 (período 249). La presencialidad plena con estudiantes y funcionarios se retomó en marzo 2022 (período 250).
+- Se eligió octubre 2022 como inicio para garantizar al menos un semestre completo de operación normal post-pandemia antes del inicio de la ventana de análisis.
+- Agosto y septiembre 2025 se excluyen por estar en período de facturación incompleto al momento de la extracción de datos.
+- La serie resultante tiene **33 períodos consecutivos sin huecos** en régimen de operación normal.
+:::
+
+::: {.callout-important title="DECISIÓN 3 — Tratamiento de Central_5"}
+**Criterio aplicado:** Incluida en la serie agregada; excluida del análisis individual.
+
+**Justificación:** Central_5 presenta valores de relación R/A superiores a 7.0 en varios períodos, lo cual es físicamente inconsistente con operación normal (implicaría FP < 0.14). Se trata de una cuenta de consumo marginal cuya ubicación física e inventario de cargas no están disponibles. Su peso en el total agregado es inferior al 3%, por lo que no distorsiona la serie agregada. Para el análisis individual se documenta como caso atípico sin modelar.
+:::
+
+::: {.callout-important title="DECISIÓN 4 — Incorporación de Central_3"}
+**Criterio aplicado:** Incluida en la serie agregada desde junio 2023 (período 265).
+
+**Justificación:** El edificio nuevo de la USCO entró en operación en junio 2023. Central_3 corresponde a la medición eléctrica de este edificio. La incorporación genera una redistribución del consumo entre cuentas pero no un incremento neto significativo dado que la población académica y administrativa no tuvo cambios drásticos. En la serie agregada esto se refleja como una variación de nivel dentro del rango histórico normal de la sede.
+:::
+
+::: {.callout-important title="DECISIÓN 5 — Variables de intervención puntual"}
+**Criterio aplicado:** Dummies para enero 2023 y septiembre 2024.
+
+**Enero 2023 (período 264):** El semestre académico inició el 10 de enero de 2023 como parte del proceso de nivelación de calendarios post-pandemia. Esto generó un mes con comportamiento mixto — parte vacacional, parte académico — que el modelo interpreta como valor atípico. Justificación documentada en el calendario académico institucional.
+
+**Septiembre 2024 (período 280):** El valor registrado supera 2.5 desviaciones estándar sobre la media móvil de la serie (criterio estadístico objetivo). Se asocia a condiciones anómalas de medición en el período correspondiente a la falla del transformador de Central_2. Se trata como outlier aditivo mediante variable de intervención.
+:::
+
+::: {.callout-important title="DECISIÓN 6 — Estrategia de modelado"}
+**Series modeladas:**
+
+1. **Energía activa agregada (kWh):** Serie principal para pronóstico de demanda. Objetivo 3.
+2. **Relación R/A agregada:** Serie para monitoreo normativo. Objetivo 3. Se aplica transformación logit dado que es un cociente acotado en (0,1).
+3. **Excedente reactivo de Central_2 (kVArh):** Serie para cuantificación económica. Objetivo 5.
+
+**Series NO modeladas individualmente:**
+- Energía reactiva agregada: MAPE > 140% en validación. El problema estructural es la alta variabilidad en meses de vacaciones donde la reactiva colapsa mientras la activa cae menos. Se usa solo para cálculo del excedente como diferencia directa.
+- Central_1 y Central_4: Cumplen normativa en prácticamente todos los períodos. Sin variabilidad suficiente para modelado predictivo.
+- Central_2: Incumple en prácticamente todos los períodos. El valor analítico está en cuantificar el excedente, no en predecir el incumplimiento binario.
+- Central_5: Ver Decisión 3.
+:::
+
+---
+
+# Análisis exploratorio de datos (EDA)
+
+## Serie de energía activa agregada
+
+```{r eda_activa_raw}
+# Serie cruda
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_01_raw.png"))
+```
+
+*La serie muestra una tendencia creciente desde octubre 2022 hasta mediados de 2024, seguida de una estabilización. El patrón estacional es consistente con el calendario académico: picos en febrero-marzo (inicio semestre), mayo (fin primer semestre), agosto-septiembre (inicio y fin segundo semestre), y valles en enero, junio-julio y diciembre (períodos de vacaciones).*
+
+```{r eda_activa_stl}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_02_stl.png"))
+```
+
+*La descomposición STL confirma tres componentes diferenciables: tendencia creciente hasta 2024 que refleja el retorno progresivo a la normalidad post-pandemia; componente estacional estable y repetible con amplitud de ±80.000 kWh; y componente de remainder con dos valores atípicos identificados (enero 2023 y septiembre 2024) que justifican las variables de intervención de la Decisión 5.*
+
+```{r eda_activa_seasonal}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_03_seasonal.png"))
+```
+
+```{r eda_activa_boxplot}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_04_boxplot.png"))
+```
+
+*El boxplot mensual confirma dos grupos claramente diferenciados: meses académicos (febrero, marzo, mayo, agosto, septiembre, octubre, noviembre) con consumo entre 160.000 y 250.000 kWh, y meses de vacaciones (enero, junio, julio, diciembre) con consumo entre 80.000 y 130.000 kWh. Esta separación justifica el uso de la variable Vacaciones como covariable en los modelos SARIMAX.*
+
+## Serie de energía reactiva agregada
+
+```{r eda_reactiva_raw}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_01_raw.png"))
+```
+
+```{r eda_reactiva_stl}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_02_stl.png"))
+```
+
+*La STL de reactiva muestra una tendencia en forma de arco — creciente hasta mediados de 2024 y decreciente después — que coincide con la incorporación de Central_3 (junio 2023) y la posterior estabilización de sus cargas. El remainder identifica una anomalía severa en junio-julio 2025 (caída a ~12.000 kVArh), que contrasta con el patrón histórico de esos meses (~40.000 kVArh). Este período se investiga en la sección de detección de anomalías.*
+
+```{r eda_reactiva_seasonal}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_03_seasonal.png"))
+```
+
+```{r eda_reactiva_boxplot}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_04_boxplot.png"))
+```
+
+## Relación R/A agregada
+
+```{r eda_relacion}
+# PENDIENTE: generar gráficos de la serie R/A
+# Script 04 actualizado debe producir:
+# - Relacion_01_raw.png
+# - Relacion_02_stl.png
+# - Relacion_03_seasonal.png
+# - Relacion_04_boxplot.png
+# - Relacion_05_acf_pacf.png
+# Placeholder hasta que se ejecute el script corregido
+
+cat("Gráficos de la serie R/A pendientes de generación.\nEjecutar script 04 actualizado.")
+```
+
+## Análisis por cuenta
+
+```{r eda_cuentas}
+# PENDIENTE: script 05 — análisis descriptivo por cuenta
+# Contenido esperado:
+# - Tabla de períodos de incumplimiento por cuenta y año
+# - Gráfico de relación R/A por cuenta (serie temporal)
+# - Ranking de cuentas por excedente reactivo acumulado
+# - Caracterización de Central_5 como caso atípico
+
+cat("Análisis por cuenta pendiente. Ver script 05.")
+```
+
+---
+
+# Modelado de series de tiempo
+
+## Pruebas de estacionariedad
+
+```{r estacionariedad_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_05_acf_pacf.png"))
+```
+
+::: {.callout-note title="Resultados — Energía Activa"}
+- **ADF (nivel):** estadístico = −6.51, p = 0.01 → rechaza raíz unitaria
+- **KPSS (nivel):** estadístico = 0.51, p = 0.039 → rechaza estacionariedad
+- **Interpretación:** Contradicción entre pruebas en nivel. Serie con raíz unitaria débil. Se confirma estacionariedad en primera diferencia: ADF p = 0.01, KPSS p = 0.10.
+- **Decisión:** d = 1
+:::
+
+```{r estacionariedad_reactiva}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_05_acf_pacf.png"))
+```
+
+::: {.callout-note title="Resultados — Energía Reactiva"}
+- **ADF (nivel):** estadístico = −4.51, p = 0.01 → rechaza raíz unitaria
+- **KPSS (nivel):** estadístico = 0.17, p = 0.10 → no rechaza estacionariedad
+- **Interpretación:** Ambas pruebas acuerdan estacionariedad en nivel.
+- **Decisión:** d = 0
+:::
+
+::: {.callout-note title="Resultados — Relación R/A (PENDIENTE)"}
+Pendiente de ejecución del script 04 actualizado con la serie R/A transformada (logit).
+:::
+
+## Comparativa de modelos
+
+```{r tabla_modelos_activa}
+# Tabla generada por script 04 — cargar desde CSV exportado
+# PENDIENTE: script 04 debe exportar tabla comparativa a CSV
+# Placeholder con resultados ya conocidos del output anterior
+
+tabla_activa <- data.frame(
+  Modelo        = c("Auto ARIMA", "SARIMA Manual",
+                    "SARIMAX Vacaciones", "SARIMAX Temperatura",
+                    "SARIMAX Multivariado"),
+  Especificacion = c("ARIMA(4,1,0)(0,1,0)[12]",
+                     "ARIMA(0,1,2)(0,1,0)[12]",
+                     "ARIMAX(0,1,2)(0,0,0)[12] + Vac",
+                     "ARIMAX(0,1,2)(0,0,0)[12] + Temp",
+                     "ARIMAX(0,1,2)(0,0,0)[12] + Vac + Temp"),
+  AICc          = c(734.87, 740.26, 1012.91, 1053.20, 1006.43),
+  BIC           = c(739.64, 743.68, 1020.09, 1060.39, 1014.66),
+  MAE_Test      = c(14545, 10326, 14898, 45887, 15571),
+  RMSE_Test     = c(18435, 14632, 17481, 51077, 17504),
+  MAPE_Pct      = c(9.81, 6.70, 9.00, 29.18, 8.85)
+)
+
+apa_table(tabla_activa,
+          col.names = c("Modelo", "Especificación", "AICc", "BIC",
+                        "MAE", "RMSE", "MAPE (%)"),
+          caption   = "Tabla 2. Comparativa de modelos — Energía Activa (kWh)",
+          nota      = "MAE y RMSE en kWh. Validación rolling-origin, h = 1, n_test = 6. Mejor modelo según MAPE fuera de muestra: SARIMA Manual.",
+          align     = c("l", "l", "r", "r", "r", "r", "r"))
+```
+
+::: {.callout-warning title="Limitación — Ljung-Box activa"}
+El diagnóstico de residuos del modelo seleccionado (SARIMA Manual) muestra p-valores del test de Ljung-Box por debajo de 0.05 entre los lags 3 y 16, indicando autocorrelación residual no capturada. Esto se atribuye parcialmente a los valores atípicos de enero 2023 y septiembre 2024. El modelo corregido con dummies de intervención (pendiente de ejecución) debería resolver esta limitación. Los pronósticos actuales deben interpretarse con cautela.
+:::
+
+```{r diagnostico_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_06_residuals_qq.png"))
+```
+
+```{r ljungbox_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_07_residuals_ljungbox.png"))
+```
+
+## Pronóstico energía activa
+
+```{r pronostico_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_08_forecast.png"))
+```
+
+```{r tabla_pronostico_activa}
+pronostico_activa <- data.frame(
+  Mes        = c("2025-09","2025-10","2025-11","2025-12","2026-01","2026-02"),
+  Punto      = c(263481, 202544, 213149, 105523, 102008, 195027),
+  IC80_inf   = c(220233, 153512, 163522,  55309,  51213, 143657),
+  IC80_sup   = c(306730, 251576, 262776, 155738, 152804, 246398),
+  IC95_inf   = c(197338, 127556, 137252,  28727,  24323, 116463),
+  IC95_sup   = c(329625, 277532, 289047, 182320, 179694, 273591)
+)
+
+apa_table(pronostico_activa,
+          col.names = c("Mes", "Pronóstico", "IC80 inf.", "IC80 sup.",
+                        "IC95 inf.", "IC95 sup."),
+          caption   = "Tabla 3. Pronóstico energía activa — 6 meses (kWh)",
+          nota      = "Modelo: SARIMA(0,1,2)(0,1,0)[12]. Intervalos sujetos a revisión tras corrección de outliers.",
+          align     = c("c","r","r","r","r","r"))
+```
+
+## Modelado de la relación R/A
+
+```{r modelo_relacion}
+# PENDIENTE: ejecutar script 04 actualizado que incluye:
+# 1. Transformación logit de la serie R/A
+# 2. Pruebas ADF/KPSS sobre la serie transformada
+# 3. Ajuste ARIMA/SARIMA sobre la serie transformada
+# 4. Transformación inversa del pronóstico
+# 5. Comparación con umbral 0.4843 para estimar meses de incumplimiento futuro
+
+cat("Modelado de R/A pendiente. Ver script 04 actualizado.")
+```
+
+---
+
+# Análisis por cuenta y detección de anomalías
+
+## Caracterización por tipo de comportamiento
+
+::: {.callout-note title="Tipología de cuentas identificada"}
+**Tipo 1 — Cumplimiento estructural:** Central_1 (136/136 meses), Central_4 (138/138 meses). Cumplen normativa en prácticamente todos los períodos históricos. Análisis relevante: confirmar estabilidad y detectar desviaciones puntuales.
+
+**Tipo 2 — Incumplimiento estructural:** Central_2 (6/144 meses en cumplimiento). Incumple en el 96% de los períodos desde 2014. Análisis relevante: cuantificar excedente reactivo y estimar impacto económico CTER.
+
+**Tipo 3 — Comportamiento variable:** Central_5 (106/136 meses) y Central_3 (17/17 meses desde su inicio). Tienen variabilidad real en el cumplimiento. Análisis relevante: caracterizar patrones y estimar probabilidad de incumplimiento.
+:::
+
+```{r analisis_cuentas}
+# PENDIENTE: script 05 — análisis descriptivo por cuenta
+# Entregables esperados:
+# - Tabla de cumplimiento por cuenta y año (ya disponible en Excel)
+# - Serie temporal de relación R/A por cuenta
+# - Excedente reactivo mensual de Central_2
+# - Trayectoria del factor M para Central_2
+
+cat("Script 05 pendiente de creación.")
+```
+
+## Esquema multicapa de detección de anomalías
+
+::: {.callout-note title="Diseño del esquema — Objetivo 4"}
+El esquema de detección opera en tres capas:
+
+**Capa 1 — Criterio normativo determinístico:** Mes con R/A > 0.4843 en cualquier cuenta. Identificación directa del incumplimiento.
+
+**Capa 2 — Criterio estadístico:** Residuos del modelo ARIMA que superen ±2.5σ. Identifica meses con comportamiento anómalo respecto al patrón histórico, independientemente del cumplimiento normativo.
+
+**Capa 3 — Cambio de régimen:** Prueba de Bai-Perron sobre la serie de relación R/A de Central_2. Identifica rupturas estructurales en el nivel de incumplimiento.
+:::
+
+```{r deteccion_anomalias}
+# PENDIENTE: script 06 — detección multicapa
+# Requiere:
+# - Modelo ARIMA de R/A (script 04 actualizado)
+# - Excedente mensual por cuenta (script 05)
+# - Prueba Bai-Perron (paquete strucchange)
+
+cat("Script 06 pendiente de creación.")
+```
+
+---
+
+# Estimación económica — CTER
+
+## Metodología de estimación
+
+::: {.callout-important title="Criterio metodológico — Estimación normativa"}
+Dado que las facturas reales incluyen componentes no separables (aseo, alumbrado público, subsidios) y el precio de la energía reactiva varía trimestralmente con la tarifa del operador de red, la estimación del impacto económico se realiza aplicando estrictamente la fórmula de la CREG:
+
+$$CTER = Excedente_{kVArh} \times D \times M$$
+
+Donde:
+- **Excedente:** kVArh que superan el 48.43% de la energía activa del período, calculado directamente desde los datos de facturación.
+- **D:** cargo por distribución en COP/kVArh para el nivel de tensión de cada cuenta (valor público de Electrohuila — pendiente de consulta).
+- **M:** factor multiplicador reconstruido mes a mes según las reglas de la CREG 199/2019.
+
+Esta estimación representa el **costo potencial mínimo bajo la norma estricta**, no el costo real facturado. Se presentan tres escenarios: sin corrección (M actual), corrección en año 1 (M = 1), y corrección en año 2.
+:::
+
+## Reconstrucción del factor M para Central_2
+
+::: {.callout-note title="Estado del factor M — Central_2"}
+Central_2 registra incumplimiento continuo desde al menos 2014 (inicio de la base de datos disponible). Dado que:
+
+- Año 1 (meses 1–12 de incumplimiento): M = 1
+- Año 2 (meses 13–18): M escala de 1 a 6
+- Estabilización: M = 6 durante 12 meses
+- Año posterior sin corrección: M escala de 1 a 12
+
+Y que la única interrupción del incumplimiento fue de 2 meses no consecutivos en los últimos 36 meses (insuficiente para reinicio del factor según la norma que exige >3 meses consecutivos):
+
+**Central_2 se encuentra en el tramo de M = 6 o superior desde hace varios años.**
+
+La reconstrucción exacta de la trayectoria de M requiere determinar el mes exacto de inicio del incumplimiento continuo, lo cual se hará en el script 05.
+:::
+
+```{r estimacion_cter}
+# PENDIENTE: script 07 — estimación CTER
+# Requiere:
+# - Excedente mensual por cuenta (script 05)
+# - Valor de D para Electrohuila (consulta externa)
+# - Trayectoria de M reconstruida (script 05)
+# Entregables:
+# - Tabla de CTER mensual por cuenta (2022–2025)
+# - CTER acumulado vs escenario de corrección
+# - Ranking económico de cuentas críticas
+
+cat("Script 07 pendiente de creación.")
+```
+
+---
+
+# Conclusiones y recomendaciones
+
+> *Sección pendiente de completar una vez ejecutados todos los análisis.*
+
+## Hallazgos preliminares
+
+::: {.callout-note title="Hallazgos confirmados hasta esta etapa"}
+1. La sede cumple normativa en términos agregados (R/A histórica entre 0.30 y 0.42), pero el incumplimiento es un fenómeno de cuenta individual dominado por Central_2.
+
+2. Central_2 representa la cuenta de mayor consumo (~50% del total de la sede) e incumple normativa en el 96% de los períodos desde 2014. Dado el tiempo acumulado de incumplimiento, el factor M aplicable es 6 o superior, multiplicando significativamente el costo potencial de cada kVArh excedente.
+
+3. El patrón estacional del consumo es consistente y predecible: los meses de vacaciones (enero, junio-julio, diciembre) concentran mayor riesgo de incumplimiento porque la reactiva cae menos proporcionalmente que la activa.
+
+4. La entrada en operación del edificio nuevo (Central_3, junio 2023) redistribuyó las cargas pero no alteró el patrón general de cumplimiento de la sede.
+
+5. El modelo SARIMA(0,1,2)(0,1,0)[12] para energía activa agregada logra MAPE de 6.70% en validación fuera de muestra, siendo el más parsimonioso y con mejor desempeño predictivo.
+:::
+
+## Recomendaciones de intervención
+
+> *Pendiente de completar tras la estimación económica CTER.*
+
+---
+
+# Referencias
+
+> *Pendiente de completar en formato APA 7.*
+
+- Comisión de Regulación de Energía y Gas (CREG). (2018). *Resolución CREG 015 de 2018.* Bogotá: CREG.
+- Comisión de Regulación de Energía y Gas (CREG). (2019). *Resolución CREG 199 de 2019.* Bogotá: CREG.
+
+---
+
+# Apéndice — Registro de scripts
+
+| Script | Descripción | Estado |
+|--------|-------------|--------|
+| 01_Unificar_Consumo_Pagos_Central.R | Limpieza y unificación datos Sede Central | ✓ Completo |
+| 02_Unificar_Consumo_Pagos.R | Limpieza y unificación datos agregados | ✓ Completo |
+| 03_Filtrar_36_Meses.R | Filtro ventana temporal + exportación | ✓ Pendiente corrección (corte jul 2025) |
+| 04_Modelado_ARIMA.R | EDA + modelado activa, reactiva, R/A | ⚠ Pendiente corrección (dummies + R/A) |
+| 05_Analisis_Cuentas.R | Caracterización por cuenta + excedente | ✗ Por crear |
+| 06_Deteccion_Anomalias.R | Esquema multicapa detección | ✗ Por crear |
+| 07_Estimacion_CTER.R | Cálculo CTER + escenarios económicos | ✗ Por crear |

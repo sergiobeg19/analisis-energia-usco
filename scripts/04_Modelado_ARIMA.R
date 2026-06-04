@@ -44,7 +44,7 @@ library(readxl)
 # ─────────────────────────────────────────────────────────────────────────────
 # FUNCIÓN AUXILIAR DE MODELAMIENTO COMPLETO
 # ─────────────────────────────────────────────────────────────────────────────
-analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df) {
+analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df, mostrar_plots = TRUE) {
   cat(sprintf("\n===================================================\n"))
   cat(sprintf(" INICIANDO ANÁLISIS: %s\n", toupper(nombre_variable)))
   cat(sprintf("===================================================\n"))
@@ -66,6 +66,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
          x = "Año", y = nombre_variable) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_01_raw.png", sep="")), plot = p1, width = 8, height = 4)
+  if (mostrar_plots) print(p1)
   
   # 2b. Descomposición STL
   stl_fit <- stl(ts_y, s.window = "periodic", robust = TRUE)
@@ -73,12 +74,14 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
     labs(title = paste("Descomposición STL -", nombre_variable)) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_02_stl.png", sep="")), plot = p2, width = 8, height = 6)
+  if (mostrar_plots) print(p2)
   
   # 2c. Seasonal subseries
   p3 <- ggseasonplot(ts_y, year.labels = TRUE, continuous = TRUE) +
     labs(title = paste("Patrón estacional por año -", nombre_variable), x = "Mes", y = nombre_variable) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_03_seasonal.png", sep="")), plot = p3, width = 8, height = 4)
+  if (mostrar_plots) print(p3)
   
   # 2d. Boxplot mensual
   df_box <- df %>% mutate(Mes_label = month.abb[Mes])
@@ -88,6 +91,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
          x = "Mes", y = nombre_variable) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_04_boxplot.png", sep="")), plot = p4, width = 8, height = 4)
+  if (mostrar_plots) print(p4)
   
   # 3. Estacionariedad
   cat("\n── Pruebas de estacionariedad...\n")
@@ -117,6 +121,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
   p_pacf <- ggPacf(ts_para_acf, lag.max = 24) + labs(title = "PACF") + theme_minimal()
   p5 <- p_acf + p_pacf
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_05_acf_pacf.png", sep="")), plot = p5, width = 10, height = 4)
+  if (mostrar_plots) print(p5)
   
   # 5. Ajustes de Modelos
   cat("\n── Ajustando modelos...\n")
@@ -265,6 +270,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
          x = "Valores teóricos", y = "Residuos observados") +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_06_residuals_qq.png", sep="")), plot = p6, width = 6, height = 4)
+  if (mostrar_plots) print(p6)
   
   # 9c. Test de Ljung-Box en lags 1 a 24
   lags_lb <- 1:24
@@ -284,6 +290,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
     scale_y_continuous(limits = c(0, 1)) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_07_residuals_ljungbox.png", sep="")), plot = p7, width = 8, height = 4)
+  if (mostrar_plots) print(p7)
   
   # 10. Pronóstico a futuro (6 meses)
   cat("\n── Generando pronóstico a futuro (6 meses)...\n")
@@ -338,6 +345,7 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df)
          x = "Año", y = nombre_variable) +
     theme_minimal()
   ggsave(filename = file.path(plot_dir, paste(label_corto, "_08_forecast.png", sep="")), plot = p8, width = 8, height = 4)
+  if (mostrar_plots) print(p8)
   
   return(resumen)
 }
