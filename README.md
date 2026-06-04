@@ -21,16 +21,22 @@ analisis-energia-usco/
 │   └── processed/                    # Datos procesados (generados por scripts)
 │       ├── Consumo_Central.csv/.xlsx  # Tabla 1: cuenta × período (Sede Central)
 │       ├── Resumen_Sede.csv/.xlsx     # Tabla 2: resumen mensual sede
-│       └── Consumo_Final.csv/.xlsx    # Tabla 3: agregado total todas las cuentas
+│       ├── Consumo_Final.csv/.xlsx    # Tabla 3: agregado total todas las cuentas
+│       ├── Central_2022.csv/.xlsx     # Detalle por cuenta filtrado post-pandemia (2022+)
+│       └── Resumen_Sede_2022.csv/.xlsx # Serie agregada filtrada post-pandemia (2022+)
 ├── scripts/
 │   ├── 01_Unificar_Consumo_Pagos_Central.R  # Genera Tablas 1 y 2
-│   └── 02_Unificar_Consumo_Pagos.R          # Genera Tabla 3
+│   ├── 02_Unificar_Consumo_Pagos.R          # Genera Tabla 3
+│   ├── 03_Filtrar_36_Meses.R                # Filtra período 2022+, une temp y exporta
+│   └── 04_Modelado_ARIMA.R                  # EDA y modelado predictivo (ARIMA/SARIMAX)
 ├── notebooks/
 │   ├── Taller_Regresion_Lineal_USCO.qmd     # Código fuente — Regresión Lineal
-│   └── Taller_Regresion_Logistica.qmd       # Código fuente — Regresión Logística
+│   ├── Taller_Regresion_Logistica.qmd       # Código fuente — Regresión Logística
+│   ├── Proyecto_Energia_USCO.qmd            # Análisis principal, pronóstico y anomalías
+│   └── usco_apa.css                         # Estilos CSS para los reportes (.gitignore)
 ├── docs/
 │   ├── Anteproyecto.docx                    # Anteproyecto del trabajo de grado
-│   ├── diccionario_datos.md                  # Diccionario de variables
+│   ├── diccionario_datos.md                 # Diccionario de variables
 │   ├── Taller_Regresion_Lineal_USCO.html    # Reporte renderizado
 │   └── Taller_Regresion_Logistica.html      # Reporte renderizado
 └── .gitignore
@@ -41,7 +47,8 @@ analisis-energia-usco/
 ### Requisitos
 
 - **R** ≥ 4.3
-- Paquetes: `readxl`, `dplyr`, `tidyr`, `writexl`, `here`, `ggplot2`, `knitr`, `kableExtra`, `scales`
+- **Quarto** ≥ 1.4
+- Paquetes de R: `readxl`, `dplyr`, `tidyr`, `writexl`, `here`, `ggplot2`, `knitr`, `kableExtra`, `scales`, `tsibble`, `feasts`, `fable`, `fabletools`, `forecast`, `tseries`, `urca`, `strucchange`, `FinTS`, `patchwork`, `lubridate`
 
 ### Pasos
 
@@ -52,21 +59,28 @@ analisis-energia-usco/
 
 2. Abrir el proyecto en RStudio (`analisis-energia-usco.Rproj`).
 
-3. Ejecutar los scripts de procesamiento:
+3. Ejecutar la tubería de scripts de procesamiento:
    ```r
-   source("scripts/01_Unificar_Consumo_Pagos_Central.R")  # Tablas 1 y 2
-   source("scripts/02_Unificar_Consumo_Pagos.R")           # Tabla 3
+   source("scripts/01_Unificar_Consumo_Pagos_Central.R") # Históricos de Sede Central (Tablas 1 y 2)
+   source("scripts/02_Unificar_Consumo_Pagos.R")         # Histórico agregado total (Tabla 3)
+   source("scripts/03_Filtrar_36_Meses.R")               # Filtro post-pandemia (2022+) y temperatura
+   source("scripts/04_Modelado_ARIMA.R")                 # Modelamiento y pronóstico ARIMA/SARIMA
    ```
 
-4. Los reportes HTML ya renderizados están disponibles en `docs/`.
+4. Renderizar el reporte principal en formato HTML:
+   ```bash
+   quarto render notebooks/Proyecto_Energia_USCO.qmd
+   ```
 
 ## 📊 Datos
 
-| Tabla | Archivo | Granularidad | Filas | Generada por |
-|-------|---------|-------------|-------|-------------|
-| Tabla 1 | `Consumo_Central.csv` | Cuenta × período (5 cuentas) | 1.112 | Script 01 |
-| Tabla 2 | `Resumen_Sede.csv` | Período mensual (sede) | 291 | Script 01 |
-| Tabla 3 | `Consumo_Final.csv` | Período mensual (todas las cuentas) | 308 | Script 02 |
+| Tabla | Archivo | Granularidad | Generada por | Descripción |
+|-------|---------|-------------|-------------|-------------|
+| Tabla 1 | `Consumo_Central.csv` | Cuenta × período (5 cuentas) | Script 01 | Histórico completo de Sede Central |
+| Tabla 2 | `Resumen_Sede.csv` | Período mensual (sede) | Script 01 | Histórico mensual agregado de Sede Central |
+| Tabla 3 | `Consumo_Final.csv` | Período mensual (sede) | Script 02 | Histórico mensual de todas las cuentas |
+| Tabla 4 | `Central_2022.csv` | Cuenta × período post-2022 | Script 03 | Detalle por cuenta filtrado post-pandemia (2022+) |
+| Tabla 5 | `Resumen_Sede_2022.csv` | Período mensual post-2022 | Script 03 | Serie agregada post-pandemia con temperatura |
 
 Consulta el [Diccionario de Datos](docs/diccionario_datos.md) para la descripción completa de cada variable.
 
@@ -75,6 +89,7 @@ Consulta el [Diccionario de Datos](docs/diccionario_datos.md) para la descripci�
 - [Anteproyecto](docs/Anteproyecto.docx) — Anteproyecto del trabajo de grado
 - [Regresión Lineal](docs/Taller_Regresion_Lineal_USCO.html) — Activa → Reactiva (modelo simple y múltiple)
 - [Regresión Logística](docs/Taller_Regresion_Logistica.html) — Predicción de incumplimiento normativo
+- [Proyecto Principal (Quarto)](notebooks/Proyecto_Energia_USCO.qmd) — Documento fuente del análisis predictivo de energía, detección de anomalías y estimación CTER
 
 ## 👥 Autores
 
@@ -85,4 +100,4 @@ Consulta el [Diccionario de Datos](docs/diccionario_datos.md) para la descripci�
 
 ## 📜 Referencia Normativa
 
-- **CREG 015 de 2018** — Relación Reactiva/Activa ≤ 0.48. El incumplimiento genera recargos económicos en la factura eléctrica.
+- **CREG 015 de 2018** y **CREG 199 de 2019** — Regulan el factor de potencia (límite R/A ≤ 0.4843). El incumplimiento reiterado genera el cobro del Cargo por Transporte de Energía Reactiva (CTER) con factor multiplicador M.
