@@ -101,12 +101,12 @@ El análisis se aborda en dos niveles:
 
 ```{r carga_datos}
 # Definición de directorios y carga de fuentes de datos
-RUTA_BASE <- "C:/Users/ESTUDIANTES/Documents/Working Holydays/"
+RUTA_BASE <- here::here("data", "processed")
 
-# ── Carga de las dos tablas exportadas por el script de unificación ─────────────
-dt_cuenta <- read.csv(paste0(RUTA_BASE, "Consumo_Central.csv"),
+# ── Carga de las dos tablas exportadas por el script de preparación ─────────────
+dt_cuenta <- read.csv(file.path(RUTA_BASE, "Detalle_Cuenta_Periodo.csv"),
                       header = TRUE, sep = ",")
-dt_sede   <- read.csv(paste0(RUTA_BASE, "Resumen_Sede.csv"),
+dt_sede   <- read.csv(file.path(RUTA_BASE, "Serie_Sede_Central.csv"),
                       header = TRUE, sep = ",")
 
 # ── Conversiones de tipo necesarias para los modelos ─────────────────────────

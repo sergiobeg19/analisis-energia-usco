@@ -1,6 +1,6 @@
 # Diccionario de Datos
 
-Descripción detallada de todas las variables utilizadas en el análisis de energía eléctrica de la Universidad Surcolombiana (USCO). Los datos históricos comprenden el período **2000–2025** y se registran mensualmente.
+Descripción detallada de todas las variables utilizadas en el análisis de energía eléctrica de la Universidad Surcolombiana (USCO). Los datos históricos comprenden el período **2001–2025** (con $t=1$ correspondiente a Mayo de 2001) y se registran mensualmente.
 
 ---
 
@@ -30,11 +30,13 @@ Descripción detallada de todas las variables utilizadas en el análisis de ener
 
 ---
 
-## Tabla 1: `Consumo_Central.csv` — Consumo por cuenta-período (Sede Central)
+## Tablas Intermedias Históricas (2001–2025)
+
+### Tabla 1: `Consumo_Central.csv` — Consumo por cuenta-período (Sede Central Histórico)
 
 Generada por: `scripts/01_Unificar_Consumo_Pagos_Central.R`
-Granularidad: **una fila por cuenta × período** (solo 5 cuentas de Sede Central)
-Usada en: Notebook de Regresión Logística
+Granularidad: **una fila por cuenta × período** (las 5 cuentas de Sede Central)
+Usada en: Carga inicial de datos y control histórico
 
 | Variable | Tipo | Descripción |
 |----------|------|-------------|
@@ -42,43 +44,98 @@ Usada en: Notebook de Regresión Logística
 | Nombre_Cuenta | Categórica | Nombre legible: Central_1 a Central_5 |
 | Ano | Numérica | Año del registro |
 | Mes | Numérica | Mes del registro (1–12) |
-| Tiempo | Numérica | Índice secuencial del período (1, 2, 3, ...) |
+| Tiempo | Numérica | Índice secuencial del período (1 = Mayo 2001, ..., 292 = Agosto 2025) |
 | Semestre | Numérica | Semestre del año: 1 (Ene–Jun), 2 (Jul–Dic) |
 | Trimestre | Numérica | Trimestre del año: 1 a 4 |
-| Activa | Numérica (kWh) | Energía activa consumida por la cuenta en el período |
-| Reactiva | Numérica (kVArh) | Energía reactiva consumida por la cuenta en el período |
-| Relacion | Numérica | Razón Reactiva / Activa (límite normativo: ≤ 0.48) |
-| Cumple | Categórica | `"Sí"` si Relación ≤ 0.48, `"No"` si la excede |
+| Activa | Numérica (kWh) | Energía activa consumida por la cuenta en el período (imputada en ceros intermedios) |
+| Reactiva | Numérica (kVArh) | Energía reactiva consumida por la cuenta en el período (imputada en ceros intermedios) |
+| Relacion | Numérica | Razón Reactiva / Activa (límite normativo CREG: ≤ 0.4843) |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
 | Cumple_bin | Binaria (0/1) | 1 = cumple norma, 0 = incumple |
 | Pago | Numérica (COP) | Valor pagado por la cuenta en ese período |
 
----
-
-## Tabla 2: `Resumen_Sede.csv` — Resumen mensual de Sede Central
+### Tabla 2: `Resumen_Sede.csv` — Resumen mensual de Sede Central Histórico
 
 Generada por: `scripts/01_Unificar_Consumo_Pagos_Central.R`
 Granularidad: **una fila por período** (agregación de las 5 cuentas)
-Usada en: Notebook de Regresión Logística
+Usada en: Control e históricos consolidados
 
 | Variable | Tipo | Descripción |
 |----------|------|-------------|
-| Tiempo | Numérica | Índice secuencial del período |
+| Tiempo | Numérica | Índice secuencial del período (1 = Mayo 2001, ...) |
 | Ano | Numérica | Año del registro |
 | Mes | Numérica | Mes del registro (1–12) |
 | Activa_Total | Numérica (kWh) | Suma de energía activa de las 5 cuentas |
 | Reactiva_Total | Numérica (kVArh) | Suma de energía reactiva de las 5 cuentas |
 | Pago_Total_Sede | Numérica (COP) | Suma de pagos de las 5 cuentas en el período |
 | Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes (0–5) |
-| Cuentas_Incumplen | Numérica | Número de cuentas con Relación > 0.48 ese mes (0–5) |
+| Cuentas_Incumplen | Numérica | Número de cuentas con Relación > 0.4843 ese mes (0–5) |
 | Sede_Incumple | Binaria (0/1) | 1 = al menos una cuenta incumple, 0 = todas cumplen |
 
 ---
 
-## Tabla 3: `Consumo_Final.csv` — Consumo agregado total (todas las cuentas)
+## Tablas de Modelado y Análisis Filtradas (2014–2025)
+
+Estas tablas son generadas a partir de `2014` para el ajuste de modelos econométricos y series de tiempo, aislando el impacto temporal de la pandemia y adaptando la serie al retorno a la normalidad presencial.
+
+### Tabla 4: `Central_2014.csv` / `.xlsx` — Detalle por Cuenta de Sede Central Enriquecido
+
+Generada por: `scripts/03_Filtrar_36_Meses.R`
+Granularidad: **una fila por cuenta × período** (desde Enero 2014 a Julio 2025)
+Usada en: Análisis de regresión logística a nivel de cuentas
+
+| Variable | Tipo | Descripción |
+|----------|------|-------------|
+| Cuenta | Categórica | Identificador de la cuenta |
+| Nombre_Cuenta | Categórica | Nombre legible: Central_1 a Central_5 |
+| Ano | Numérica | Año del registro |
+| Mes | Numérica | Mes del registro (1–12) |
+| Tiempo | Numérica | Índice secuencial del período (Mayo 2001 = 1) |
+| Semestre | Numérica | Semestre del año (1 o 2) |
+| Trimestre | Numérica | Trimestre del año (1 a 4) |
+| Activa | Numérica (kWh) | Energía activa consumida por la cuenta en el período (ceros imputados por media mensual) |
+| Reactiva | Numérica (kVArh) | Energía reactiva consumida por la cuenta en el período (ceros imputados por media mensual) |
+| Relacion | Numérica | Razón Reactiva / Activa |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
+| Cumple_bin | Binaria (0/1) | 1 = cumple norma, 0 = incumple |
+| Pago | Numérica (COP) | Valor pagado por la cuenta en ese período |
+| Temperatura | Numérica (°C) | Temperatura promedio mensual de la región (Neiva) |
+| Vacaciones | Binaria (0/1) | 1 = mes de receso académico regular (Ene, Jun, Jul, Dic), 0 = mes lectivo regular |
+| Fase | Factor / Categoría | Segmentación temporal: `"Pre-pandemia"`, `"Pandemia-Transicion"`, o `"Nueva-Normalidad"` |
+| Dummy_Pandemia | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Pandemia y Transición (Mar 2020 – Jun 2023) |
+| Dummy_Normalidad | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Nueva Normalidad (Jul 2023 en adelante) |
+| Excedente | Numérica (kVArh) | Energía reactiva penalizable calculada como `max(Reactiva - 0.4843 * Activa, 0)` |
+
+### Tabla 5: `Resumen_Sede_2014.csv` / `.xlsx` — Serie Agregada Sede Central Enriquecida
+
+Generada por: `scripts/03_Filtrar_36_Meses.R`
+Granularidad: **una fila por período** (desde Enero 2014 a Julio 2025, 139 periodos continuos)
+Usada en: Modelado SARIMA/SARIMAX de Sede Central (Proyecto_Energia_USCO.qmd)
+
+| Variable | Tipo | Descripción |
+|----------|------|-------------|
+| Ano | Numérica | Año del registro |
+| Mes | Numérica | Mes del registro (1–12) |
+| Activa_Total | Numérica (kWh) | Suma de energía activa de las cuentas activas de Sede Central |
+| Reactiva_Total | Numérica (kVArh) | Suma de energía reactiva de las cuentas activas de Sede Central |
+| Pago_Total_Sede | Numérica (COP) | Suma de pagos de las cuentas activas de Sede Central en el período |
+| Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes (0–5) |
+| Cuentas_Incumplen | Numérica | Número de cuentas que exceden el límite de 0.4843 en su relación Reactiva/Activa |
+| Sede_Incumple | Binaria (0/1) | 1 = al menos una cuenta incumple la relación normada, 0 = todas cumplen |
+| Temperatura | Numérica (°C) | Temperatura promedio mensual de la región (Neiva) |
+| Vacaciones | Binaria (0/1) | 1 = mes de receso académico regular (Ene, Jun, Jul, Dic), 0 = mes lectivo regular |
+| Tiempo | Numérica | Índice secuencial absoluto continuo del período (Mayo 2001 = 1) |
+| Fase | Factor / Categoría | Segmentación temporal: `"Pre-pandemia"`, `"Pandemia-Transicion"`, o `"Nueva-Normalidad"` |
+| Dummy_Pandemia | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Pandemia y Transición |
+| Dummy_Normalidad | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Nueva Normalidad |
+
+---
+
+## Tabla 3: `Consumo_Final.csv` — Consumo agregado total (todas las cuentas de la Universidad)
 
 Generada por: `scripts/02_Unificar_Consumo_Pagos.R`
-Granularidad: **una fila por período** (agregación de TODAS las cuentas de la USCO)
-Usada en: Notebook de Regresión Lineal
+Granularidad: **una fila por período** (agregación de TODAS las cuentas de la USCO históricas)
+Usada en: Reportes descriptivos globales de la universidad
 
 | Variable | Tipo | Descripción |
 |----------|------|-------------|
@@ -88,23 +145,15 @@ Usada en: Notebook de Regresión Lineal
 | Reactiva | Numérica (kVArh) | Energía reactiva total de todas las cuentas |
 | Cant_Cuentas | Numérica | Número de cuentas con consumo activo > 0 ese mes |
 | Cuentas_Reactiva | Numérica | Número de cuentas con consumo reactivo > 0 ese mes |
-| Relacion | Numérica | Razón Reactiva / Activa (límite normativo: ≤ 0.48) |
-| Cumple | Categórica | `"Sí"` si Relación ≤ 0.48, `"No"` si la excede |
+| Relacion | Numérica | Razón Reactiva / Activa (límite normativo: ≤ 0.4843) |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
 | Pago_Total | Numérica (COP) | Suma de pagos de todas las cuentas en el período |
 | Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes |
-| Tiempo | Numérica | Índice secuencial del período |
-
----
-
-## Variables Derivadas (creadas en runtime por los notebooks)
-
-| Variable | Creada en | Fórmula | Descripción |
-|----------|-----------|---------|-------------|
-| Vacaciones | Notebook Logístico | `ifelse(Mes %in% c(1, 6, 7, 12), 1, 0)` | 1 = mes de receso académico, 0 = mes de clases |
+| Tiempo | Numérica | Índice secuencial del período (Mayo 2001 = 1) |
 
 ---
 
 ## Normativa de Referencia
 
-- **CREG 015 de 2018**: La relación entre energía reactiva y energía activa no debe superar **0.48**. El incumplimiento genera recargos económicos en la factura.
-- Todos los costos están expresados en **Pesos Colombianos (COP)**.
+- **Resolución CREG 015 de 2018**: Establece que la relación entre energía reactiva y energía activa no debe superar **0.4843** (equivalente a un factor de potencia $\cos \varphi \ge 0.90$). Superar este límite genera penalizaciones y recargos por energía reactiva excedente facturada.
+- Todos los costos y pagos están expresados en **Pesos Colombianos (COP)**.

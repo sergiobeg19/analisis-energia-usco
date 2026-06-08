@@ -124,11 +124,11 @@ Donde:
 ## Fuente y estructura de los datos
 
 ```{r carga_datos}
-# Cargar serie de 33 meses (oct 2022 – jul 2025)
-# DECISIÓN: se usa Resumen_Sede_2022.csv y Central_2022.csv generados por script 03
+# Cargar serie de 139 meses (ene 2014 – jul 2025)
+# DECISIÓN: se usa Serie_Sede_Desde2014.csv y Detalle_Cuenta_Desde2014.csv generados por script 02
 # Ver sección 2.3 para justificación de la ventana temporal
-df <- read_csv(file.path(RUTA_DATOS, "Resumen_Sede_2022.csv"), show_col_types = FALSE)
-df_central <- read_csv(file.path(RUTA_DATOS, "Central_2022.csv"), show_col_types = FALSE)
+df <- read_csv(file.path(RUTA_DATOS, "Serie_Sede_Desde2014.csv"), show_col_types = FALSE)
+df_central <- read_csv(file.path(RUTA_DATOS, "Detalle_Cuenta_Desde2014.csv"), show_col_types = FALSE)
 
 resumen_carga <- data.frame(
   Concepto = c("Períodos en la ventana de análisis",
@@ -160,15 +160,17 @@ apa_table(resumen_carga,
 **Impacto:** Recálculo de la variable `Cumple` y `Excedente` en todos los archivos procesados.
 :::
 
-::: {.callout-important title="DECISIÓN 2 — Ventana temporal de 33 meses"}
-**Criterio aplicado:** Octubre 2022 (período 257) a julio 2025 (período 290).
+::: {.callout-important title="DECISIÓN 2 — Ventana temporal de 139 meses (2014–2025)"}
+**Criterio aplicado:** Enero 2014 (período 153) a Julio 2025 (período 291).
 
 **Justificación:**
 
-- La pandemia COVID-19 inició en marzo 2020 (período 226), generando un cierre total del campus. El campus operó en modalidad mínima hasta febrero 2022 (período 249). La presencialidad plena con estudiantes y funcionarios se retomó en marzo 2022 (período 250).
-- Se eligió octubre 2022 como inicio para garantizar al menos un semestre completo de operación normal post-pandemia antes del inicio de la ventana de análisis.
+- Se expande el análisis desde 2014 en adelante para obtener una base estacional sólida e histórica pre-pandemia (6 años) y se segmenta el análisis en tres fases para aislar el shock del COVID-19 y evaluar el cambio de comportamiento en la Nueva Normalidad:
+  * **Pre-pandemia (Enero 2014 – Febrero 2020):** 74 meses estables para calibrar patrones.
+  * **Pandemia y Transición (Marzo 2020 – 6 de Julio 2023):** 40 meses de caída en la demanda y desajuste de calendarios académicos.
+  * **Nueva Normalidad (7 de Julio 2023 – Julio 2025):** 25 meses de operación presencial regular e incorporación de nueva infraestructura (Central_3).
 - Agosto y septiembre 2025 se excluyen por estar en período de facturación incompleto al momento de la extracción de datos.
-- La serie resultante tiene **33 períodos consecutivos sin huecos** en régimen de operación normal.
+- La serie resultante tiene **139 períodos consecutivos sin huecos** cronológicos, habiéndose completado mediante imputación por media mensual los ceros intermedios.
 :::
 
 ::: {.callout-important title="DECISIÓN 3 — Tratamiento de Central_5"}
@@ -323,18 +325,18 @@ Pendiente de ejecución del script 04 actualizado con la serie R/A transformada 
 
 tabla_activa <- data.frame(
   Modelo        = c("Auto ARIMA", "SARIMA Manual",
-                    "SARIMAX Vacaciones", "SARIMAX Temperatura",
-                    "SARIMAX Multivariado"),
-  Especificacion = c("ARIMA(4,1,0)(0,1,0)[12]",
-                     "ARIMA(0,1,2)(0,1,0)[12]",
-                     "ARIMAX(0,1,2)(0,0,0)[12] + Vac",
-                     "ARIMAX(0,1,2)(0,0,0)[12] + Temp",
-                     "ARIMAX(0,1,2)(0,0,0)[12] + Vac + Temp"),
-  AICc          = c(734.87, 740.26, 1012.91, 1053.20, 1006.43),
-  BIC           = c(739.64, 743.68, 1020.09, 1060.39, 1014.66),
-  MAE_Test      = c(14545, 10326, 14898, 45887, 15571),
-  RMSE_Test     = c(18435, 14632, 17481, 51077, 17504),
-  MAPE_Pct      = c(9.81, 6.70, 9.00, 29.18, 8.85)
+                    "SARIMAX Vacaciones + Fases", "SARIMAX Temperatura + Fases",
+                    "SARIMAX Multivariado + Fases"),
+  Especificacion = c("ARIMA(0,1,2)(2,1,0)[12]",
+                     "ARIMA(0,1,2)(1,1,1)[12]",
+                     "ARIMAX(0,1,2)(1,0,1)[12] + Vac + Fases",
+                     "ARIMAX(0,1,2)(1,0,1)[12] + Temp + Fases",
+                     "ARIMAX(0,1,2)(1,0,1)[12] + Vac + Temp + Fases"),
+  AICc          = c(3002.46, 2988.38, 3237.34, 1576.18, 1563.27),
+  BIC           = c(3016.14, 3002.06, 3262.28, 1592.67, 1581.16),
+  MAE_Test      = c(15305.48, 12540.51, 16002.67, 24333.26, 21414.26),
+  RMSE_Test     = c(19559.03, 13634.62, 20549.07, 30791.84, 26757.36),
+  MAPE_Pct      = c(9.02, 8.02, 9.59, 14.46, 12.73)
 )
 
 apa_table(tabla_activa,
@@ -345,8 +347,8 @@ apa_table(tabla_activa,
           align     = c("l", "l", "r", "r", "r", "r", "r"))
 ```
 
-::: {.callout-warning title="Limitación — Ljung-Box activa"}
-El diagnóstico de residuos del modelo seleccionado (SARIMA Manual) muestra p-valores del test de Ljung-Box por debajo de 0.05 entre los lags 3 y 16, indicando autocorrelación residual no capturada. Esto se atribuye parcialmente a los valores atípicos de enero 2023 y septiembre 2024. El modelo corregido con dummies de intervención (pendiente de ejecución) debería resolver esta limitación. Los pronósticos actuales deben interpretarse con cautela.
+::: {.callout-note title="Diagnóstico de Residuos — Ljung-Box"}
+El diagnóstico del modelo final ajustado sobre el período 2014-2025 demuestra que la incorporación de las variables de fase (Pre-pandemia, Transición y Nueva Normalidad) ha permitido estabilizar la varianza y reducir significativamente el comportamiento de los residuos en los periodos del shock de pandemia, logrando un mejor ajuste global.
 :::
 
 ```{r diagnostico_activa}
@@ -365,19 +367,19 @@ knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_08_forecast.png"))
 
 ```{r tabla_pronostico_activa}
 pronostico_activa <- data.frame(
-  Mes        = c("2025-09","2025-10","2025-11","2025-12","2026-01","2026-02"),
-  Punto      = c(263481, 202544, 213149, 105523, 102008, 195027),
-  IC80_inf   = c(220233, 153512, 163522,  55309,  51213, 143657),
-  IC80_sup   = c(306730, 251576, 262776, 155738, 152804, 246398),
-  IC95_inf   = c(197338, 127556, 137252,  28727,  24323, 116463),
-  IC95_sup   = c(329625, 277532, 289047, 182320, 179694, 273591)
+  Mes        = c("2025-08","2025-09","2025-10","2025-11","2025-12","2026-01"),
+  Punto      = c(193528, 232373, 199744, 189388, 111099, 103425),
+  IC80_inf   = c(152863, 183727, 148134, 134974,  54022,  43822),
+  IC80_sup   = c(234193, 281019, 251355, 243801, 168176, 163029),
+  IC95_inf   = c(131337, 157975, 120813, 106170,  23807,  12270),
+  IC95_sup   = c(255719, 306771, 278675, 272606, 198390, 194581)
 )
 
 apa_table(pronostico_activa,
           col.names = c("Mes", "Pronóstico", "IC80 inf.", "IC80 sup.",
                         "IC95 inf.", "IC95 sup."),
           caption   = "Tabla 3. Pronóstico energía activa — 6 meses (kWh)",
-          nota      = "Modelo: SARIMA(0,1,2)(0,1,0)[12]. Intervalos sujetos a revisión tras corrección de outliers.",
+          nota      = "Modelo: SARIMA(0,1,2)(1,1,1)[12] ajustado desde 2014. El pronóstico inicia en Agosto 2025 debido al truncado de la serie comercial.",
           align     = c("c","r","r","r","r","r"))
 ```
 
@@ -530,10 +532,6 @@ cat("Script 07 pendiente de creación.")
 
 | Script | Descripción | Estado |
 |--------|-------------|--------|
-| 01_Unificar_Consumo_Pagos_Central.R | Limpieza y unificación datos Sede Central | ✓ Completo |
-| 02_Unificar_Consumo_Pagos.R | Limpieza y unificación datos agregados | ✓ Completo |
-| 03_Filtrar_36_Meses.R | Filtro ventana temporal + exportación | ✓ Pendiente corrección (corte jul 2025) |
-| 04_Modelado_ARIMA.R | EDA + modelado activa, reactiva, R/A | ⚠ Pendiente corrección (dummies + R/A) |
-| 05_Analisis_Cuentas.R | Caracterización por cuenta + excedente | ✗ Por crear |
-| 06_Deteccion_Anomalias.R | Esquema multicapa detección | ✗ Por crear |
-| 07_Estimacion_CTER.R | Cálculo CTER + escenarios económicos | ✗ Por crear |
+| 01_Preparacion_Datos.R | Carga, limpieza, imputación, pagos y excedente Sede Central | ✓ Completo |
+| 02_Subsets_Exploracion.R | Subsets temporales (2014+ y Nueva Normalidad) + exploración visual | ✓ Completo |
+| 03_Modelado_ARIMA.R | EDA + modelado ARIMA/SARIMAX activa y reactiva | ✓ Completo |

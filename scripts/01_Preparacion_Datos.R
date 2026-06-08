@@ -1,41 +1,45 @@
 # =============================================================================
-# SCRIPT: Unificación de Consumo de Cuentas y Pagos por Período
-# Universidad Surcolombiana (USCO) — SEDE CENTRAL
+# SCRIPT 01: Preparación de Datos — Consumo y Pagos de Sede Central
+# Universidad Surcolombiana (USCO) — Sede Central (5 cuentas)
 # =============================================================================
-# TABLA 1 — Consumo_Central (una fila por cuenta-período):
-#   Cuenta | Nombre_Cuenta | Ano | Mes | Tiempo | Semestre | Trimestre |
-#   Activa | Reactiva | Relacion | Cumple | Cumple_bin | Pago
+# INPUT:  data/raw/Consumo_Cuentas_.xlsx   (Histórico de consumo por cuenta)
+#         data/raw/Pago_Cuentas.xls        (Histórico de pagos por cuenta)
 #
-# TABLA 2 — Resumen_Sede (una fila por período):
-#   Tiempo | Ano | Mes | Activa_Total | Reactiva_Total |
+# OUTPUT: data/processed/Detalle_Cuenta_Periodo.csv  (Tabla 1: una fila por cuenta-período)
+#         data/processed/Serie_Sede_Central.csv       (Tabla 2: serie agregada por período)
+#
+# TABLA 1 — Detalle_Cuenta_Periodo:
+#   Cuenta | Nombre_Cuenta | Ano | Mes | Tiempo | Semestre | Trimestre |
+#   Activa | Reactiva | Relacion | Cumple | Cumple_bin | Excedente | Pago
+#
+# TABLA 2 — Serie_Sede_Central:
+#   Tiempo | Ano | Mes | Activa_Total | Reactiva_Total | Excedente_Total |
 #   Pago_Total_Sede | Cuentas_Pagadas | Cuentas_Incumplen | Sede_Incumple
 # =============================================================================
 
 library(readxl)
 library(dplyr)
 library(tidyr)
-library(writexl)
+library(readr)
 library(here)
+library(lubridate)
 
-# -----------------------------------------------------------------------------
-# RUTAS DE ARCHIVOS — portables con here() (funciona en cualquier equipo con Git)
-# -----------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# PARÁMETROS
+# ─────────────────────────────────────────────────────────────────────────────
+UMBRAL_FP <- 0.4843   # Umbral normativo CREG 015 de 2018 (R/A <= 0.4843)
 
-# RUTAS DE ENTRADA (Apuntan a la carpeta raw que acabas de llenar)
+# Rutas de entrada
 RUTA_CONSUMO_RAW <- here("data", "raw", "Consumo_Cuentas_.xlsx")
 RUTA_PAGOS       <- here("data", "raw", "Pago_Cuentas.xls")
 
-# RUTAS DE SALIDA (Se guardarán en processed para que el .qmd las lea de ahí)
-RUTA_SALIDA_XLSX  <- here("data", "processed", "Consumo_Central.xlsx")
-RUTA_SALIDA_CSV   <- here("data", "processed", "Consumo_Central.csv")
-RUTA_RESUMEN_XLSX <- here("data", "processed", "Resumen_Sede.xlsx")
-RUTA_RESUMEN_CSV  <- here("data", "processed", "Resumen_Sede.csv")
+# Rutas de salida
+RUTA_DETALLE_CSV  <- here("data", "processed", "Detalle_Cuenta_Periodo.csv")
+RUTA_SERIE_CSV    <- here("data", "processed", "Serie_Sede_Central.csv")
 
-# -----------------------------------------------------------------------------
-# CUENTAS DE SEDE CENTRAL
-# -----------------------------------------------------------------------------
+# Cuentas de Sede Central
 cuentas_central <- c(167382131,   # Central 1
-                     167383918,   # Central 4  ← CAMBIA EL NÚMERO AQUÍ SI ES NECESARIO
+                     167383918,   # Central 4
                      357154485,   # Central 5
                      847747377,   # Central 3
                      167385482)   # Central 2
@@ -57,10 +61,9 @@ df_raw <- read_excel(RUTA_CONSUMO_RAW)
 df_raw <- df_raw %>%
   mutate(`Consumo Real` = replace_na(`Consumo Real`, 0))
 
-# ── LÍNEA NUEVA: filtrar solo las 5 cuentas de Sede Central ──────────────────
+# Filtrar solo las 5 cuentas de Sede Central
 df_raw <- df_raw %>%
   filter(Cuenta %in% cuentas_central)
-# ─────────────────────────────────────────────────────────────────────────────
 
 cat("   Registros Sede Central cargados:", nrow(df_raw), "\n")
 cat("   Cuentas encontradas:", n_distinct(df_raw$Cuenta), "de 5 esperadas\n\n")
@@ -79,24 +82,61 @@ df_wide <- df_max %>%
   )
 
 # =============================================================================
-# BLOQUE 2: Construir métricas por cuenta-período (formato largo)
+# BLOQUE 2: Construir métricas por cuenta-período (con imputación)
 # =============================================================================
 
-# ── CAMBIO CLAVE: ya NO se agrupa eliminando Cuenta ──────────────────────────
-#    Se conserva Cuenta como columna → una fila por cuenta-período
-df_consumo <- df_wide %>%
-  filter(A > 0) %>%                                    # excluir períodos sin consumo real
-  mutate(
-    Activa   = A,
-    Reactiva = R,
-    Relacion = ifelse(A > 0, R / A, NA_real_),
-    Cumple   = ifelse(Relacion <= 0.48, "Sí", "No")
-  ) %>%
-  select(Cuenta, Ano, Mes, Activa, Reactiva, Relacion, Cumple) %>%
-  arrange(Cuenta, Ano, Mes)
-# ─────────────────────────────────────────────────────────────────────────────
+# 1. Determinar fecha de inicio individual por cuenta (primer mes con A > 0)
+start_dates <- df_wide %>%
+  filter(A > 0) %>%
+  group_by(Cuenta) %>%
+  summarise(Start_Date = min(make_date(Ano, Mes, 1)), .groups = "drop")
 
-cat("── Registros por cuenta-período construidos:", nrow(df_consumo), "\n")
+# 2. Crear grid secuencial completo para cada cuenta desde su Start_Date hasta Julio 2025
+df_grid <- start_dates %>%
+  group_by(Cuenta) %>%
+  reframe(
+    Fecha = seq(Start_Date, make_date(2025, 7, 1), by = "1 month")
+  ) %>%
+  mutate(
+    Ano = year(Fecha),
+    Mes = month(Fecha)
+  ) %>%
+  select(-Fecha)
+
+# 3. Unir con df_wide para obtener datos observados
+df_consumo_raw <- df_grid %>%
+  left_join(df_wide, by = c("Cuenta", "Ano", "Mes")) %>%
+  mutate(
+    Activa   = replace_na(A, 0),
+    Reactiva = replace_na(R, 0)
+  )
+
+# 4. Calcular medias históricas mensuales por cuenta (excluyendo ceros) para imputación
+medias_mensuales <- df_consumo_raw %>%
+  filter(Activa > 0) %>%
+  group_by(Cuenta, Mes) %>%
+  summarise(
+    Mean_Activa = mean(Activa, na.rm = TRUE),
+    Mean_Reactiva = mean(Reactiva, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 5. Imputar ceros intermedios y calcular métricas
+df_consumo <- df_consumo_raw %>%
+  left_join(medias_mensuales, by = c("Cuenta", "Mes")) %>%
+  mutate(
+    Es_Imputado = Activa == 0,
+    Activa      = ifelse(Activa == 0, Mean_Activa, Activa),
+    Reactiva    = ifelse(Es_Imputado, Mean_Reactiva, Reactiva),
+    Relacion    = ifelse(Activa > 0, Reactiva / Activa, NA_real_),
+    Cumple      = ifelse(Relacion <= UMBRAL_FP, "Sí", "No"),
+    # Excedente de reactiva sobre el umbral normativo
+    Excedente   = pmax(Reactiva - UMBRAL_FP * Activa, 0)
+  ) %>%
+  select(Cuenta, Ano, Mes, Activa, Reactiva, Relacion, Cumple, Excedente) %>%
+  arrange(Cuenta, Ano, Mes)
+
+cat("── Registros por cuenta-período construidos (con imputación de ceros):", nrow(df_consumo), "\n")
 
 # =============================================================================
 # BLOQUE 3: Calcular Pago individual por cuenta y Pago_Total_Sede por período
@@ -128,39 +168,42 @@ pago_sede <- pago_individual %>%
 # =============================================================================
 # BLOQUE 4: Unir consumo + pago individual + pago sede
 # =============================================================================
+min_date <- make_date(min(df_consumo$Ano), min(df_consumo$Mes[df_consumo$Ano == min(df_consumo$Ano)]), 1)
+
 df_final <- df_consumo %>%
   left_join(pago_individual, by = c("Cuenta", "Ano", "Mes")) %>%
   mutate(
     Nombre_Cuenta = nombres_central[as.character(Cuenta)],
     Cuenta        = factor(Cuenta, levels = cuentas_central),
-    Tiempo        = dense_rank(Ano * 100 + Mes),
-    # ── Variables para modelo logístico ────────────────────────────────────
-    Cumple_bin    = ifelse(Cumple == "Sí", 1L, 0L),   # Y binaria: 1=cumple, 0=incumple
-    Semestre      = ifelse(Mes <= 6, 1L, 2L),          # 1=ene-jun, 2=jul-dic
-    Trimestre     = ceiling(Mes / 3L)                  # 1 a 4
+    # Tiempo cronológico absoluto continuo desde el inicio global (May 2001)
+    Tiempo        = (Ano - year(min_date)) * 12 + (Mes - month(min_date)) + 1,
+    # Variables para modelo logístico
+    Cumple_bin    = ifelse(Cumple == "Sí", 1L, 0L),
+    Semestre      = ifelse(Mes <= 6, 1L, 2L),
+    Trimestre     = ceiling(Mes / 3L)
   ) %>%
   select(Cuenta, Nombre_Cuenta, Ano, Mes, Tiempo, Semestre, Trimestre,
-         Activa, Reactiva, Relacion, Cumple, Cumple_bin, Pago)
+         Activa, Reactiva, Relacion, Cumple, Cumple_bin, Excedente, Pago)
 
 # =============================================================================
-# BLOQUE 5: Construir Tabla 2 — Resumen_Sede (una fila por período)
+# BLOQUE 5: Construir Tabla 2 — Serie_Sede_Central (una fila por período)
 # =============================================================================
 
-resumen_sede <- df_final %>%
+serie_sede <- df_final %>%
   group_by(Tiempo, Ano, Mes) %>%
   summarise(
-    Activa_Total      = sum(Activa,          na.rm = TRUE),  # total activa sede
-    Reactiva_Total    = sum(Reactiva,        na.rm = TRUE),  # total reactiva sede
-    Cuentas_Incumplen = sum(Cumple == "No",  na.rm = TRUE),  # cuántas incumplen
+    Activa_Total      = sum(Activa,          na.rm = TRUE),
+    Reactiva_Total    = sum(Reactiva,        na.rm = TRUE),
+    Excedente_Total   = sum(Excedente,       na.rm = TRUE),
+    Cuentas_Incumplen = sum(Cumple == "No",  na.rm = TRUE),
     .groups = "drop"
   ) %>%
   left_join(pago_sede, by = c("Ano", "Mes")) %>%
   mutate(
-    # Y binaria para modelo logístico nivel sede
-    Sede_Incumple = ifelse(Cuentas_Incumplen > 0, 1L, 0L)   # 0=todas cumplen, 1=al menos 1 incumple
+    Sede_Incumple = ifelse(Cuentas_Incumplen > 0, 1L, 0L)
   ) %>%
   arrange(Tiempo) %>%
-  select(Tiempo, Ano, Mes, Activa_Total, Reactiva_Total,
+  select(Tiempo, Ano, Mes, Activa_Total, Reactiva_Total, Excedente_Total,
          Pago_Total_Sede, Cuentas_Pagadas, Cuentas_Incumplen, Sede_Incumple)
 
 # =============================================================================
@@ -170,7 +213,7 @@ cat("═════════════════════════
 cat("  RESUMEN — CONSUMO SEDE CENTRAL\n")
 cat("═══════════════════════════════════════════════════\n")
 cat(sprintf("  TABLA 1 — filas (cuenta-período) : %d\n", nrow(df_final)))
-cat(sprintf("  TABLA 2 — filas (período)        : %d\n", nrow(resumen_sede)))
+cat(sprintf("  TABLA 2 — filas (período)        : %d\n", nrow(serie_sede)))
 cat(sprintf("  Cuentas                          : %d\n", n_distinct(df_final$Cuenta)))
 cat(sprintf("  Rango de años                    : %d – %d\n",
             min(df_final$Ano), max(df_final$Ano)))
@@ -185,21 +228,19 @@ print(df_final %>%
 cat("\n  Primeros registros Tabla 1:\n")
 print(head(df_final, 6))
 cat("\n  Primeros registros Tabla 2:\n")
-print(head(resumen_sede, 6))
+print(head(serie_sede, 6))
 cat("═══════════════════════════════════════════════════\n\n")
 
 # =============================================================================
-# BLOQUE 7: Exportar
+# BLOQUE 7: Exportar solo CSV
 # =============================================================================
 cat("── Exportando archivos...\n")
 
-write_xlsx(df_final,    RUTA_SALIDA_XLSX)
-write.csv(df_final,     RUTA_SALIDA_CSV,   row.names = FALSE)
-write_xlsx(resumen_sede, RUTA_RESUMEN_XLSX)
-write.csv(resumen_sede,  RUTA_RESUMEN_CSV,  row.names = FALSE)
+dir.create(here("data", "processed"), showWarnings = FALSE, recursive = TRUE)
 
-cat(sprintf("   ✓ Tabla 1 Excel : %s\n", RUTA_SALIDA_XLSX))
-cat(sprintf("   ✓ Tabla 1 CSV   : %s\n", RUTA_SALIDA_CSV))
-cat(sprintf("   ✓ Tabla 2 Excel : %s\n", RUTA_RESUMEN_XLSX))
-cat(sprintf("   ✓ Tabla 2 CSV   : %s\n", RUTA_RESUMEN_CSV))
+write_csv(df_final,   RUTA_DETALLE_CSV)
+write_csv(serie_sede,  RUTA_SERIE_CSV)
+
+cat(sprintf("   ✓ Detalle cuenta-período : %s\n", RUTA_DETALLE_CSV))
+cat(sprintf("   ✓ Serie Sede Central     : %s\n", RUTA_SERIE_CSV))
 cat("\nProceso completado exitosamente.\n")

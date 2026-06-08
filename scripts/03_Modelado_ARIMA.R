@@ -1,8 +1,8 @@
 # =============================================================================
-# SCRIPT 04: Modelado ARIMA / SARIMA / SARIMAX — Serie de Consumo Eléctrico
+# SCRIPT 03: Modelado ARIMA / SARIMA / SARIMAX — Serie de Consumo Eléctrico
 # Universidad Surcolombiana (USCO) — Sede Central
 # =============================================================================
-# INPUT:  data/processed/Resumen_Sede_2022.csv
+# INPUT:  data/processed/Serie_Sede_Desde2014.csv
 #
 # FLUJO:
 #   1. Construir objeto ts mensual para Activa y Reactiva
@@ -149,9 +149,12 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df,
   cat("   ✓ Modelo manual seleccionado:", as.character(fit_manual), "\n")
   
   # 5c. Modelos SARIMAX (D = 0 para evitar singularidades estacionales)
-  xreg_vac <- matrix(df$Vacaciones, ncol = 1, dimnames = list(NULL, "Vacaciones"))
-  xreg_temp <- matrix(df$Temperatura, ncol = 1, dimnames = list(NULL, "Temperatura"))
-  xreg_mult <- matrix(cbind(df$Vacaciones, df$Temperatura), ncol = 2, dimnames = list(NULL, c("Vacaciones", "Temperatura")))
+  xreg_vac <- matrix(cbind(df$Vacaciones, df$Dummy_Pandemia, df$Dummy_Normalidad), ncol = 3,
+                     dimnames = list(NULL, c("Vacaciones", "Dummy_Pandemia", "Dummy_Normalidad")))
+  xreg_temp <- matrix(cbind(df$Temperatura, df$Dummy_Pandemia, df$Dummy_Normalidad), ncol = 3,
+                      dimnames = list(NULL, c("Temperatura", "Dummy_Pandemia", "Dummy_Normalidad")))
+  xreg_mult <- matrix(cbind(df$Vacaciones, df$Temperatura, df$Dummy_Pandemia, df$Dummy_Normalidad), ncol = 4,
+                      dimnames = list(NULL, c("Vacaciones", "Temperatura", "Dummy_Pandemia", "Dummy_Normalidad")))
   
   p_m <- best_manual$p; d_m <- best_manual$d; q_m <- best_manual$q
   P_m <- best_manual$P; Q_m <- best_manual$Q
@@ -160,9 +163,9 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df,
   fit_x_temp <- Arima(ts_y, order = c(p_m, d_m, q_m), seasonal = list(order = c(P_m, 0, Q_m), period = 12), xreg = xreg_temp, include.constant = TRUE)
   fit_x_mult <- Arima(ts_y, order = c(p_m, d_m, q_m), seasonal = list(order = c(P_m, 0, Q_m), period = 12), xreg = xreg_mult, include.constant = TRUE)
   
-  cat("   ✓ Modelo SARIMAX (Vacaciones) ajustado\n")
-  cat("   ✓ Modelo SARIMAX (Temperatura) ajustado\n")
-  cat("   ✓ Modelo SARIMAX (Multivariado) ajustado\n")
+  cat("   ✓ Modelo SARIMAX (Vacaciones + Fases) ajustado\n")
+  cat("   ✓ Modelo SARIMAX (Temperatura + Fases) ajustado\n")
+  cat("   ✓ Modelo SARIMAX (Multivariado + Fases) ajustado\n")
   
   # 6. Validación Rolling-Origin Cruzada (últimos 6 meses)
   cat("\n── Ejecutando validación Rolling-Origin (fuera de muestra, h = 1)...\n")
@@ -216,13 +219,13 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df,
   
   # 7. Tabla Comparativa Resumen
   resumen <- data.frame(
-    Modelo = c("Auto ARIMA", "SARIMA Manual", "SARIMAX Vacaciones", "SARIMAX Temperatura", "SARIMAX Multivariado"),
+    Modelo = c("Auto ARIMA", "SARIMA Manual", "SARIMAX Vacaciones + Fases", "SARIMAX Temperatura + Fases", "SARIMAX Multivariado + Fases"),
     Especificacion = c(
       as.character(fit_auto),
       sprintf("ARIMA(%d,%d,%d)(%d,1,%d)[12]", p_m, d_m, q_m, P_m, Q_m),
-      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Vac", p_m, d_m, q_m, P_m, Q_m),
-      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Temp", p_m, d_m, q_m, P_m, Q_m),
-      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Vac + Temp", p_m, d_m, q_m, P_m, Q_m)
+      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Vac + Fases", p_m, d_m, q_m, P_m, Q_m),
+      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Temp + Fases", p_m, d_m, q_m, P_m, Q_m),
+      sprintf("ARIMAX(%d,%d,%d)(%d,0,%d)[12] + Vac + Temp + Fases", p_m, d_m, q_m, P_m, Q_m)
     ),
     AICc = round(c(fit_auto$aicc, fit_manual$aicc, fit_x_vac$aicc, fit_x_temp$aicc, fit_x_mult$aicc), 2),
     BIC = round(c(BIC(fit_auto), BIC(fit_manual), BIC(fit_x_vac), BIC(fit_x_temp), BIC(fit_x_mult)), 2),
@@ -311,20 +314,26 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df,
   future_temp <- left_join(data.frame(Mes = meses_futuros), temp_mensual_prom, by = "Mes")$Mean_Temp
   
   # Hacer forecast según el tipo del mejor modelo
+  future_pandemia <- rep(0L, h_pronostico)
+  future_normalidad <- rep(1L, h_pronostico)
+  
   if (best_idx == 1 || best_idx == 2) {
     # Modelo puramente ARIMA/SARIMA
     fc <- forecast(fit_final, h = h_pronostico)
   } else if (best_idx == 3) {
-    # SARIMAX Vac
-    newxreg <- matrix(future_vac, ncol = 1, dimnames = list(NULL, "Vacaciones"))
+    # SARIMAX Vac + Fases
+    newxreg <- matrix(cbind(future_vac, future_pandemia, future_normalidad), ncol = 3,
+                      dimnames = list(NULL, c("Vacaciones", "Dummy_Pandemia", "Dummy_Normalidad")))
     fc <- forecast(fit_final, h = h_pronostico, xreg = newxreg)
   } else if (best_idx == 4) {
-    # SARIMAX Temp
-    newxreg <- matrix(future_temp, ncol = 1, dimnames = list(NULL, "Temperatura"))
+    # SARIMAX Temp + Fases
+    newxreg <- matrix(cbind(future_temp, future_pandemia, future_normalidad), ncol = 3,
+                      dimnames = list(NULL, c("Temperatura", "Dummy_Pandemia", "Dummy_Normalidad")))
     fc <- forecast(fit_final, h = h_pronostico, xreg = newxreg)
   } else {
-    # SARIMAX Mult
-    newxreg <- matrix(cbind(future_vac, future_temp), ncol = 2, dimnames = list(NULL, c("Vacaciones", "Temperatura")))
+    # SARIMAX Mult + Fases
+    newxreg <- matrix(cbind(future_vac, future_temp, future_pandemia, future_normalidad), ncol = 4,
+                      dimnames = list(NULL, c("Vacaciones", "Temperatura", "Dummy_Pandemia", "Dummy_Normalidad")))
     fc <- forecast(fit_final, h = h_pronostico, xreg = newxreg)
   }
   
@@ -363,7 +372,7 @@ calcular_metricas_error <- function(reales, predicciones) {
 # 2. EJECUCIÓN PRINCIPAL DEL MODELADO
 # ─────────────────────────────────────────────────────────────────────────────
 # Cargar datos
-df_resumen <- read_csv(here("data", "processed", "Resumen_Sede_2022.csv"), show_col_types = FALSE)
+df_resumen <- read_csv(here("data", "processed", "Serie_Sede_Desde2014.csv"), show_col_types = FALSE)
 
 # Modelar Energía Activa
 res_activa <- analizar_y_modelar_serie(
