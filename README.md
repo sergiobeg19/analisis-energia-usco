@@ -25,10 +25,11 @@ analisis-energia-usco/
 │       ├── Central_2022.csv/.xlsx     # Detalle por cuenta filtrado post-pandemia (2022+)
 │       └── Resumen_Sede_2022.csv/.xlsx # Serie agregada filtrada post-pandemia (2022+)
 ├── scripts/
-│   ├── 01_Unificar_Consumo_Pagos_Central.R  # Genera Tablas 1 y 2
-│   ├── 02_Unificar_Consumo_Pagos.R          # Genera Tabla 3
-│   ├── 03_Filtrar_36_Meses.R                # Filtra período 2022+, une temp y exporta
-│   └── 04_Modelado_ARIMA.R                  # EDA y modelado predictivo (ARIMA/SARIMAX)
+│   ├── 01_Preparacion_Datos.R            # Carga, limpieza, imputación y preparación de datos
+│   ├── 02_Subsets_Exploracion.R          # Creación de subsets temporales y gráficos exploratorios
+│   ├── 03_Analisis_Cuentas.R             # Análisis descriptivo por cuenta, ranking y factor M (CREG 199)
+│   └── 04_Modelado_ARIMA.R               # EDA y modelado predictivo (ARIMA/SARIMAX)
+│   └── README.md                         # Descripción de los scripts
 ├── notebooks/
 │   ├── Taller_Regresion_Lineal_USCO.qmd     # Código fuente — Regresión Lineal
 │   ├── Taller_Regresion_Logistica.qmd       # Código fuente — Regresión Logística
@@ -61,10 +62,10 @@ analisis-energia-usco/
 
 3. Ejecutar la tubería de scripts de procesamiento:
    ```r
-   source("scripts/01_Unificar_Consumo_Pagos_Central.R") # Históricos de Sede Central (Tablas 1 y 2)
-   source("scripts/02_Unificar_Consumo_Pagos.R")         # Histórico agregado total (Tabla 3)
-   source("scripts/03_Filtrar_36_Meses.R")               # Filtro post-pandemia (2022+) y temperatura
-   source("scripts/04_Modelado_ARIMA.R")                 # Modelamiento y pronóstico ARIMA/SARIMA
+   source("scripts/01_Preparacion_Datos.R")     # Carga, limpieza, imputación y preparación de datos
+   source("scripts/02_Subsets_Exploracion.R")   # Creación de subsets temporales y gráficos
+   source("scripts/03_Analisis_Cuentas.R")      # Análisis por cuenta, ranking y factor M
+   source("scripts/04_Modelado_ARIMA.R")        # Modelamiento y pronóstico ARIMA/SARIMA
    ```
 
 4. Renderizar el reporte principal en formato HTML:
@@ -100,4 +101,4 @@ Consulta el [Diccionario de Datos](docs/diccionario_datos.md) para la descripci�
 
 ## 📜 Referencia Normativa
 
-- **CREG 015 de 2018** y **CREG 199 de 2019** — Regulan el factor de potencia (límite R/A ≤ 0.4843). El incumplimiento reiterado genera el cobro del Cargo por Transporte de Energía Reactiva (CTER) con factor multiplicador M.
+- **CREG 015 de 2018** y **CREG 199 de 2019** — Regulan el factor de potencia (límite R/A ≤ 0.50 para Niveles I y II, equivalente a un factor de potencia de 0.90 o reactiva equivalente al 50% de la activa). El incumplimiento reiterado genera el cobro del Cargo por Transporte de Energía Reactiva (CTER) con factor multiplicador M.

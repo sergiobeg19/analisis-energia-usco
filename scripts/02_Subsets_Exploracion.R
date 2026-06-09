@@ -29,7 +29,7 @@ library(patchwork)
 # ─────────────────────────────────────────────────────────────────────────────
 # PARÁMETROS
 # ─────────────────────────────────────────────────────────────────────────────
-UMBRAL_FP       <- 0.4843
+UMBRAL_FP       <- 0.50
 ANO_INICIO      <- 2014
 FECHA_INICIO_NN <- make_date(2023, 7, 1)
 FECHA_FIN_NN    <- make_date(2025, 7, 31)
@@ -46,17 +46,46 @@ cat("── Cargando datos procesados de Sede Central...\n")
 df_central <- read_csv(here("data", "processed", "Detalle_Cuenta_Periodo.csv"), show_col_types = FALSE)
 
 cat("── Cargando datos de temperatura promedio (IDEAM)...\n")
-RUTA_TEMPERATURA <- here("data", "raw", "Datos_Temperatura_Media.xlsx")
-
-df_temp <- read_excel(RUTA_TEMPERATURA, sheet = "Datos") %>%
+library(tidyr)
+# 1. Cargar archivo reciente (2020+)
+RUTA_TEMPERATURA_REC <- here("data", "raw", "Datos_Temperatura_Media.xlsx")
+df_temp_rec <- read_excel(RUTA_TEMPERATURA_REC, sheet = "Datos") %>%
   mutate(
     Temperatura = as.numeric(`Valor:`),
     Ano         = as.numeric(substr(Fecha, 1, 4)),
     Mes         = as.numeric(substr(Fecha, 6, 7))
   ) %>%
+  filter(Ano >= 2020) %>%
   select(Ano, Mes, Temperatura)
 
-cat(sprintf("   Temperatura disponible: %d-%02d a %d-%02d (%d registros)\n",
+# 2. Cargar archivo histórico (2014-2019)
+RUTA_TEMPERATURA_HIST <- here("data", "raw", "Datos_Temperatura_Med.xlsx")
+df_raw_temp_med <- read_excel(RUTA_TEMPERATURA_HIST)
+cabecera <- names(df_raw_temp_med)[1]
+filas <- df_raw_temp_med[[1]]
+texto_csv <- paste(c(cabecera, filas), collapse = "\n")
+df_temp_hist <- read_csv(I(texto_csv), show_col_types = FALSE) %>%
+  pivot_longer(
+    cols = -Año,
+    names_to = "Mes_Nombre",
+    values_to = "Temperatura"
+  ) %>%
+  mutate(
+    Mes = case_when(
+      Mes_Nombre == "Ene" ~ 1, Mes_Nombre == "Feb" ~ 2, Mes_Nombre == "Mar" ~ 3,
+      Mes_Nombre == "Abr" ~ 4, Mes_Nombre == "May" ~ 5, Mes_Nombre == "Jun" ~ 6,
+      Mes_Nombre == "Jul" ~ 7, Mes_Nombre == "Ago" ~ 8, Mes_Nombre == "Sep" ~ 9,
+      Mes_Nombre == "Oct" ~ 10, Mes_Nombre == "Nov" ~ 11, Mes_Nombre == "Dic" ~ 12
+    ),
+    Ano = as.numeric(Año)
+  ) %>%
+  filter(Ano < 2020) %>%
+  select(Ano, Mes, Temperatura)
+
+# 3. Consolidar ambas fuentes
+df_temp <- bind_rows(df_temp_hist, df_temp_rec) %>% arrange(Ano, Mes)
+
+cat(sprintf("   Temperatura disponible consolidada: %d-%02d a %d-%02d (%d registros)\n",
             min(df_temp$Ano), min(df_temp$Mes[df_temp$Ano == min(df_temp$Ano)]),
             max(df_temp$Ano), max(df_temp$Mes[df_temp$Ano == max(df_temp$Ano)]),
             nrow(df_temp)))
@@ -258,7 +287,7 @@ p_exp4 <- ggplot(df_plot_serie, aes(x = Fecha, y = Excedente_Total, fill = Fase)
   geom_vline(xintercept = fecha_normalidad, linetype = "dashed", color = "gray40", linewidth = 0.4) +
   scale_fill_manual(values = colores_fase) +
   labs(title = "Excedente de Energía Reactiva Total — Sede Central",
-       subtitle = "Exceso sobre el umbral CREG (R/A > 0.4843)",
+       subtitle = paste("Exceso sobre el umbral CREG (R/A >", UMBRAL_FP, ")"),
        x = "Fecha", y = "Excedente (kVArh)", fill = "Fase") +
   theme_minimal() +
   theme(legend.position = "bottom")

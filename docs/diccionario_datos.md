@@ -49,8 +49,8 @@ Usada en: Carga inicial de datos y control histórico
 | Trimestre | Numérica | Trimestre del año: 1 a 4 |
 | Activa | Numérica (kWh) | Energía activa consumida por la cuenta en el período (imputada en ceros intermedios) |
 | Reactiva | Numérica (kVArh) | Energía reactiva consumida por la cuenta en el período (imputada en ceros intermedios) |
-| Relacion | Numérica | Razón Reactiva / Activa (límite normativo CREG: ≤ 0.4843) |
-| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
+| Relacion | Numérica | Razón Reactiva / Activa (límite normativo CREG: ≤ 0.50) |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.50, `"No"` si la excede |
 | Cumple_bin | Binaria (0/1) | 1 = cumple norma, 0 = incumple |
 | Pago | Numérica (COP) | Valor pagado por la cuenta en ese período |
 
@@ -69,7 +69,7 @@ Usada en: Control e históricos consolidados
 | Reactiva_Total | Numérica (kVArh) | Suma de energía reactiva de las 5 cuentas |
 | Pago_Total_Sede | Numérica (COP) | Suma de pagos de las 5 cuentas en el período |
 | Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes (0–5) |
-| Cuentas_Incumplen | Numérica | Número de cuentas con Relación > 0.4843 ese mes (0–5) |
+| Cuentas_Incumplen | Numérica | Número de cuentas con Relación > 0.50 ese mes (0–5) |
 | Sede_Incumple | Binaria (0/1) | 1 = al menos una cuenta incumple, 0 = todas cumplen |
 
 ---
@@ -96,7 +96,7 @@ Usada en: Análisis de regresión logística a nivel de cuentas
 | Activa | Numérica (kWh) | Energía activa consumida por la cuenta en el período (ceros imputados por media mensual) |
 | Reactiva | Numérica (kVArh) | Energía reactiva consumida por la cuenta en el período (ceros imputados por media mensual) |
 | Relacion | Numérica | Razón Reactiva / Activa |
-| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.50, `"No"` si la excede |
 | Cumple_bin | Binaria (0/1) | 1 = cumple norma, 0 = incumple |
 | Pago | Numérica (COP) | Valor pagado por la cuenta en ese período |
 | Temperatura | Numérica (°C) | Temperatura promedio mensual de la región (Neiva) |
@@ -104,7 +104,7 @@ Usada en: Análisis de regresión logística a nivel de cuentas
 | Fase | Factor / Categoría | Segmentación temporal: `"Pre-pandemia"`, `"Pandemia-Transicion"`, o `"Nueva-Normalidad"` |
 | Dummy_Pandemia | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Pandemia y Transición (Mar 2020 – Jun 2023) |
 | Dummy_Normalidad | Binaria (0/1) | Variable dummy que toma valor 1 si el período pertenece a la fase de Nueva Normalidad (Jul 2023 en adelante) |
-| Excedente | Numérica (kVArh) | Energía reactiva penalizable calculada como `max(Reactiva - 0.4843 * Activa, 0)` |
+| Excedente | Numérica (kVArh) | Energía reactiva penalizable calculada como `max(Reactiva - 0.50 * Activa, 0)` |
 
 ### Tabla 5: `Resumen_Sede_2014.csv` / `.xlsx` — Serie Agregada Sede Central Enriquecida
 
@@ -120,7 +120,7 @@ Usada en: Modelado SARIMA/SARIMAX de Sede Central (Proyecto_Energia_USCO.qmd)
 | Reactiva_Total | Numérica (kVArh) | Suma de energía reactiva de las cuentas activas de Sede Central |
 | Pago_Total_Sede | Numérica (COP) | Suma de pagos de las cuentas activas de Sede Central en el período |
 | Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes (0–5) |
-| Cuentas_Incumplen | Numérica | Número de cuentas que exceden el límite de 0.4843 en su relación Reactiva/Activa |
+| Cuentas_Incumplen | Numérica | Número de cuentas que exceden el límite de 0.50 en su relación Reactiva/Activa |
 | Sede_Incumple | Binaria (0/1) | 1 = al menos una cuenta incumple la relación normada, 0 = todas cumplen |
 | Temperatura | Numérica (°C) | Temperatura promedio mensual de la región (Neiva) |
 | Vacaciones | Binaria (0/1) | 1 = mes de receso académico regular (Ene, Jun, Jul, Dic), 0 = mes lectivo regular |
@@ -145,9 +145,9 @@ Usada en: Reportes descriptivos globales de la universidad
 | Reactiva | Numérica (kVArh) | Energía reactiva total de todas las cuentas |
 | Cant_Cuentas | Numérica | Número de cuentas con consumo activo > 0 ese mes |
 | Cuentas_Reactiva | Numérica | Número de cuentas con consumo reactivo > 0 ese mes |
-| Relacion | Numérica | Razón Reactiva / Activa (límite normativo: ≤ 0.4843) |
-| Cumple | Categórica | `"Sí"` si Relación ≤ 0.4843, `"No"` si la excede |
-| Pago_Total | Numérica (COP) | Suma de pagos de todas las cuentas en el período |
+| Relacion | Numérica | Razón Reactiva / Activa (límite normativo: ≤ 0.50) |
+| Cumple | Categórica | `"Sí"` si Relación ≤ 0.50, `"No"` si la excede |
+| Pago_Total | Numérica (COP) | Valor pagado por todas las cuentas en el período |
 | Cuentas_Pagadas | Numérica | Número de cuentas con pago registrado ese mes |
 | Tiempo | Numérica | Índice secuencial del período (Mayo 2001 = 1) |
 
@@ -155,5 +155,5 @@ Usada en: Reportes descriptivos globales de la universidad
 
 ## Normativa de Referencia
 
-- **Resolución CREG 015 de 2018**: Establece que la relación entre energía reactiva y energía activa no debe superar **0.4843** (equivalente a un factor de potencia $\cos \varphi \ge 0.90$). Superar este límite genera penalizaciones y recargos por energía reactiva excedente facturada.
+- **Resolución CREG 015 de 2018 y CREG 199 de 2019**: Establece que la relación entre energía reactiva y energía activa no debe superar **0.50** (equivalente al 50% de la energía activa mensual para niveles de tensión I y II). Superar este límite genera penalizaciones y recargos por energía reactiva excedente facturada (CTER con factor M). El conteo de M inicia formalmente en Enero de 2021.
 - Todos los costos y pagos están expresados en **Pesos Colombianos (COP)**.

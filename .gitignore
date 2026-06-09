@@ -69,3 +69,18 @@ t
 notebooks/Taller_Regresion_Logistica.html
 notebooks/usco_apa.css
 Rplots.pdf
+
+# Resultados y gráficos autogenerados
+data/processed/*.csv
+data/processed/*.xlsx
+data/processed/plots/*.png
+
+# Notas sueltas
+Tips de redaccion.txt
+docs/Marco_teorico.txt
+docs/Marco_teorico_md.txt
+docs/referencias_bibliograficas.txt
+docs/normativa/Marco normativo.txt
+docs/01_Introduccion_Tesis_APA.docx
+docs/Tesis_Estructura_Final.docx
+docs/Bibliografia/

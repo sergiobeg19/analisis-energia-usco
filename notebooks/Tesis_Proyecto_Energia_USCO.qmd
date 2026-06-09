@@ -1,0 +1,976 @@
+---
+title: "Análisis estadístico, pronóstico y detección de anomalías del consumo eléctrico y del factor de potencia en la Sede Central de la Universidad Surcolombiana"
+subtitle: |
+  Trabajo de grado presentado como requisito para optar al título de
+  Especialista en Estadística
+
+  Sergio Andrés Beltrán González — 1077866726
+
+  Juan Pablo Donato — 1007778776
+
+  Universidad Surcolombiana
+
+  Facultad de Ciencias Exactas y Naturales
+
+  Especialización en Estadística
+
+  Neiva, Huila — 2025
+date-format: "DD [de] MMMM [de] YYYY"
+lang: es
+
+format:
+  docx:
+    number-sections: true
+    toc: true
+    toc-depth: 3
+    lof: true
+    lot: true
+    fig-cap-location: top
+    tbl-cap-location: top
+    fig-width: 6.5
+    fig-height: 4
+    fig-align: center
+
+execute:
+  warning: false
+  message: false
+  echo: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 6.5,
+  fig.height = 4,
+  fig.align  = "center"
+)
+
+# Instalación automática de paquetes si faltan
+paquetes <- c("readr", "dplyr", "flextable", "here", "officer")
+nuevos <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cran.r-project.org")
+
+library(readr)
+library(dplyr)
+library(flextable)
+library(officer)
+library(here)
+
+# ── Parámetros globales del proyecto ─────────────────────────────────────────
+UMBRAL_FP   <- 0.50
+RUTA_DATOS  <- here("data", "processed")
+RUTA_PLOTS  <- here("data", "processed", "plots")
+
+# ── Configuración APA nativa para Word con flextable ─────────────────────────
+set_flextable_defaults(
+  font.family = "Times New Roman",
+  font.size = 11,
+  theme_fun = theme_vanilla,
+  padding = 3
+)
+
+apa_flextable <- function(df, nota = "") {
+  ft <- flextable(df) %>%
+    font(fontname = "Times New Roman", part = "all") %>%
+    fontsize(size = 11, part = "all") %>%
+    border_remove() %>%
+    hline_top(border = fp_border_default(width = 1.5), part = "header") %>%
+    hline_bottom(border = fp_border_default(width = 1.5), part = "header") %>%
+    hline_bottom(border = fp_border_default(width = 1.5), part = "body") %>%
+    autofit()
+  
+  if (nota != "") {
+    ft <- add_footer_lines(ft, values = paste("Nota.", nota)) %>%
+      italic(i = 1, part = "footer") %>%
+      fontsize(size = 10, part = "footer")
+  }
+  return(ft)
+}
+```
+
+
+
+# Resumen {-}
+
+La gestión ineficiente de la energía reactiva en instituciones de educación superior genera penalizaciones tarifarias severas. Este trabajo analizó el consumo eléctrico y el factor de potencia (FP) de la Sede Central de la Universidad Surcolombiana (2014-2025). El objetivo fue caracterizar el incumplimiento normativo (FP < 0.90), pronosticar la demanda y estimar el impacto económico bajo la Resolución CREG 199 de 2019. Se consolidó una base de 139 meses, demostrando que el exceso de reactiva no es un fenómeno aleatorio, sino un problema estructural concentrado en una subestación específica (Central_2), con una probabilidad empírica de incumplimiento del 94%. Mediante un enfoque de series de tiempo, se contrastaron modelos econométricos clásicos y algoritmos de Machine Learning. El modelo SARIMA(0,1,2)(1,1,1)[12] resultó ser el estimador más preciso para la energía activa (MAPE = 8.02%). Adicionalmente, se implementó un esquema de detección de anomalías multicapa que identificó alteraciones operativas y rupturas estructurales en el histórico de consumo. Finalmente, la cuantificación económica (CTER) reveló que la falta de mitigación técnica en la etapa pospandemia ha generado sobrecostos millonarios crecientes, impulsados por la variable multiplicadora de la norma CREG. Se concluye que el diseño e instalación de compensación capacitiva en la subestación crítica es imperativo, respaldando las recomendaciones en el marco de la norma ISO 50001 para la planificación energética institucional.
+
+**Palabras clave:** Energía reactiva; Factor de potencia; Series de tiempo; SARIMA; CTER; ISO 50001.
+
+# Abstract {-}
+
+The inefficient management of reactive energy in higher education institutions generates severe tariff penalties. This study analyzed the electricity consumption and power factor (PF) of the Central Campus of the Universidad Surcolombiana (2014-2025). The objective was to characterize regulatory non-compliance (PF < 0.90), forecast demand, and estimate the economic impact under CREG Resolution 199 of 2019. A database of 139 months was consolidated, demonstrating that excess reactive energy is not a random phenomenon but a structural problem concentrated in a specific substation (Central_2), with an empirical probability of non-compliance of 94%. Using a time series approach, classic econometric models and Machine Learning algorithms were contrasted. The SARIMA(0,1,2)(1,1,1)[12] model proved to be the most accurate estimator for active energy (MAPE = 8.02%). Additionally, a multilayer anomaly detection scheme was implemented, identifying operational alterations and structural breaks in the consumption history. Finally, the economic quantification (CTER) revealed that the lack of technical mitigation in the post-pandemic stage has generated growing multi-million costs, driven by the multiplier variable of the CREG norm. It is concluded that the design and installation of capacitive compensation in the critical substation is imperative, supporting recommendations within the framework of the ISO 50001 standard for institutional energy planning.
+
+**Keywords:** Reactive energy; Power factor; Time series; SARIMA; CTER; ISO 50001.
+
+
+# Introducción
+
+## Descripción del problema
+
+La gestión eficiente de la energía en instituciones de educación superior constituye un desafío técnico, económico y normativo de creciente relevancia en el contexto colombiano. Las universidades públicas, por su escala operativa y la diversidad de cargas eléctricas que concentran —sistemas de climatización, laboratorios, infraestructura de cómputo y alumbrado—, presentan perfiles de consumo complejos que, de no ser gestionados adecuadamente, generan ineficiencias energéticas susceptibles de derivar en penalizaciones tarifarias regulatorias.
+
+La Sede Central de la Universidad Surcolombiana (USCO), ubicada en Neiva (Huila), opera con cinco cuentas eléctricas activas —denominadas Central_1 a Central_5— correspondientes a subestaciones independientes de medición y facturación. El consumo eléctrico institucional involucra tanto energía activa (kWh) como energía reactiva (kVArh), cuya relación determina el factor de potencia del sistema. Cuando esta relación supera el umbral normativo establecido por la regulación eléctrica colombiana, se activa el cobro del Cargo por Transporte de Energía Reactiva (CTER), cuyo monto se incrementa progresivamente en función del tiempo acumulado de incumplimiento mediante un factor multiplicador M de escala 1 a 12, definido en la Resolución CREG 199 de 2019 (Comisión de Regulación de Energía y Gas [CREG], 2019).
+
+A partir de la exploración de los registros históricos de facturación comprendidos entre 2001 y 2025, se identificó que al menos una de las subestaciones registra incumplimiento normativo de forma prácticamente ininterrumpida desde 2014, situación que, bajo las reglas de acumulación del factor multiplicador M vigentes desde enero de 2021, implica la liquidación del CTER con el máximo recargo regulatorio permitido. Sin embargo, la ausencia de un repositorio de datos estructurado, la presencia de registros faltantes y la falta de modelos predictivos formales impiden que la institución cuantifique con precisión su exposición financiera ni anticipe el comportamiento futuro del consumo para planificar intervenciones correctivas.
+
+Este problema se inscribe en una brecha más amplia de gestión energética institucional: la USCO carece actualmente de los instrumentos analíticos y la granularidad de información necesarios para cumplir con los requisitos de una revisión energética sistemática según la norma ISO 50001:2018 (International Organization for Standardization, 2018), que exige la identificación de usos significativos de energía, el establecimiento de líneas base de desempeño y la formulación de indicadores de seguimiento basados en datos verificables. En el contexto universitario colombiano, Castrillón (2021) demostró la viabilidad de implementar un sistema de gestión energética bajo la norma ISO 50001 en un campus de educación superior, identificando los indicadores de desempeño energético (IDEn) y las líneas de base como insumos críticos para la planificación energética.
+
+**Marco normativo aplicable.** Aunque inicialmente se planteó en el anteproyecto un umbral de factor de potencia de 0.90 (equivalente a R/A ≤ 0.485), la actualización normativa obliga a adoptar el límite de 0.50 exigido por la Resolución CREG 015 de 2018 y la Resolución CREG 199 de 2019 (CREG, 2018, 2019) para los niveles de tensión I y II de la institución. El incumplimiento reiterado genera el cobro del CTER con factor multiplicador M (escala de 1 a 12). Este marco se complementa con los requerimientos técnicos del RETIE (Ministerio de Minas y Energía, 2013, 2024) y las directrices nacionales de eficiencia energética estipuladas en la Ley 1715 de 2014 y la Ley 2407 de 2024 (Congreso de la República de Colombia, 2014, 2024). La fórmula general del CTER es:
+
+$$CTER = (Exceso\; E_{R,ind} + E_{R,cap}) \times D \times M$$
+
+Donde $D$ es el cargo por distribución según nivel de tensión (COP/kVArh) y $M$ es el factor multiplicador por reincidencia (escala de 1 a 12).
+
+## Justificación
+
+La pertinencia de este estudio se sustenta en tres dimensiones complementarias:
+
+Desde la **dimensión económica**, la estimación preliminar del impacto financiero del CTER en el período de Nueva Normalidad (julio de 2023 a julio de 2025) revela un rango de pérdidas acumuladas que oscila entre \$9.2 millones y \$84.1 millones de pesos colombianos, según el escenario de acumulación del factor multiplicador. La amplitud de este intervalo obedece a la ausencia de telemetría diaria que permita determinar con exactitud cuántos días al mes se superó el límite normativo, condición técnica exigida por la Resolución CREG 015 de 2018 para la activación del recargo por reincidencia. Esta asimetría de información tarifaria impide calcular el retorno sobre la inversión de cualquier medida correctiva, lo que convierte la implementación de sistemas de medición inteligente en una prioridad de gestión anterior a cualquier intervención en infraestructura.
+
+Desde la **dimensión normativa**, el Reglamento Técnico de Instalaciones Eléctricas (RETIE, Resolución 40117 de 2024) y la regulación tarifaria de la CREG establecen obligaciones técnicas explícitas para los usuarios conectados en niveles de tensión I y II, entre las que se encuentra mantener la relación entre energía reactiva y energía activa (R/A) en valores iguales o inferiores a 0.50. El incumplimiento sostenido de este límite no solo genera penalizaciones económicas, sino que puede comprometer la integridad de la infraestructura eléctrica de la sede y afectar la calidad del suministro a otros usuarios del sistema de distribución.
+
+Desde la **dimensión institucional**, la USCO se encuentra en proceso de fortalecimiento de sus sistemas de gestión. La adopción de un marco analítico-estadístico robusto para el monitoreo del consumo eléctrico constituye un insumo directo para la implementación del ciclo de mejora continua PHVA propuesto por la norma NTC-ISO 50001:2019 (ICONTEC, 2019), en particular para las fases de planificación energética y revisión por la dirección. Los productos generados por este estudio —repositorio de datos, modelos predictivos, esquema de detección de anomalías e indicadores de seguimiento— están diseñados para operar como componentes del sistema de gestión de la energía institucional.
+
+## Pregunta de investigación
+
+¿En qué medida es posible caracterizar, modelar y proyectar el comportamiento del consumo eléctrico y del factor de potencia de la Sede Central de la Universidad Surcolombiana mediante técnicas estadísticas de series de tiempo y algoritmos de aprendizaje automático, y cuál es el impacto económico del incumplimiento normativo acumulado en términos del Cargo por Transporte de Energía Reactiva?
+
+## Objetivos
+
+**Objetivo general.** Desarrollar un marco analítico-estadístico integral para el diagnóstico, pronóstico y detección de anomalías del consumo eléctrico y del factor de potencia en la Sede Central de la Universidad Surcolombiana, con el fin de cuantificar el impacto económico del incumplimiento normativo y proveer insumos técnicos para la implementación de un sistema de gestión de la energía bajo la norma ISO 50001:2018.
+
+**Objetivos específicos:**
+
+1. Consolidar, depurar y armonizar la base de datos mensual de consumo eléctrico por cuenta para el período 2001–2025, tratando valores faltantes, series desbalanceadas y cambios de codificación, con el fin de construir un repositorio reproducible que integre las variables de energía activa, energía reactiva, factor de potencia, relación R/A e indicador binario de cumplimiento normativo.
+2. Caracterizar el comportamiento temporal del consumo eléctrico a nivel agregado de campus y desagregado por cuenta, mediante análisis de tendencia, estacionalidad, autocorrelación y pruebas de ruptura estructural, identificando períodos críticos, cambios de régimen y diferencias entre grupos de cuentas.
+3. Construir y validar modelos de pronóstico univariados y multivariados (ARIMA, SARIMA, SARIMAX) para las series de consumo y relación R/A, comparando su desempeño fuera de muestra con modelos de aprendizaje automático de referencia (ExtraTrees, XGBoost), mediante métricas estándar (RMSE, MAPE, MASE) y evaluación fuera de muestra con ventana fija y origen rodante.
+4. Diseñar e implementar un esquema multicapa de detección de anomalías asociadas al bajo factor de potencia, articulando el criterio normativo determinístico con métodos basados en residuos de modelos de series de tiempo y detección de cambios de régimen (prueba de Bai-Perron), e identificando hipótesis explicativas sobre los eventos detectados con base en contexto operativo institucional.
+5. Estimar el exceso mensual de energía reactiva por cuenta y su costo potencial mediante escenarios tarifarios con rango de incertidumbre, y desarrollar productos de apoyo a la decisión —indicadores de incumplimiento, ranking de cuentas críticas y proyecciones de riesgo financiero— orientados a la gestión energética continua de la institución. Se omitió la programación de tableros interactivos (dashboards) por restricciones de tiempo en la ejecución del proyecto, siendo sustituidos por los rankings estáticos y tablas analíticas presentados en este documento.
+
+## Alcance y restricciones
+
+El estudio se circunscribe a las cinco subestaciones de la Sede Central de la USCO y cubre el período comprendido entre enero de 2001 y julio de 2025, con una ventana de análisis estadístico y modelado de 139 meses continuos (enero de 2014 a julio de 2025), definida a partir de criterios de calidad y continuidad de los datos documentados en la sección metodológica. Los análisis se realizan con granularidad mensual, correspondiente a la periodicidad de la facturación comercial disponible.
+
+El estudio presenta dos restricciones operativas de carácter externo que delimitan su alcance sin afectar la validez de los resultados. En primer lugar, no se dispuso del inventario de equipos eléctricos por cuenta ni de los estudios de iluminación institucionales, dado que estos documentos no se encontraban disponibles o actualizados al momento del análisis. En segundo lugar, la ausencia de telemetría diaria impide determinar con exactitud el número de días de incumplimiento dentro de cada período mensual, lo que introduce una incertidumbre técnica en el cálculo del factor multiplicador M del CTER, resuelta mediante la construcción de un rango de escenarios tarifarios.
+
+## Estructura del documento
+
+El presente documento se organiza en siete secciones. La sección 2 describe las fuentes de datos, el proceso de depuración y las decisiones analíticas adoptadas durante el preprocesamiento. La sección 3 presenta el análisis exploratorio de las series de energía activa, reactiva y relación R/A a nivel agregado y desagregado. La sección 4 desarrolla el modelado estadístico y la comparativa de pronósticos. La sección 5 presenta el análisis por cuenta y el esquema multicapa de detección de anomalías. La sección 6 expone la metodología de estimación económica del CTER y los resultados por escenario. La sección 7 reúne las conclusiones por objetivo y las recomendaciones enmarcadas en el ciclo PHVA de la norma ISO 50001:2018.
+
+---
+
+# Marco Teórico y Normativo
+
+## Fundamentos del Sistema Eléctrico y Calidad de la Energía
+El análisis del consumo eléctrico en una institución de educación superior exige comprender las magnitudes fundamentales que caracterizan el comportamiento de la energía en redes de corriente alterna. En este bloque se revisan los conceptos de energía activa, energía reactiva, factor de potencia y calidad de la energía, así como los mecanismos disponibles para su corrección y mejora.
+
+### Energía Activa (kWh)
+La energía activa, expresada en kilovatios-hora (kWh), representa el trabajo real efectuado por la corriente eléctrica en un periodo determinado. Corresponde a la porción de la potencia suministrada que se convierte efectivamente en trabajo útil: calor, luz, movimiento mecánico u otras formas de energía aprovechable. Es la magnitud que registran los medidores convencionales de consumo y sobre la cual se basa la mayor parte de la facturación eléctrica. 
+
+### Energía Reactiva (kVArh)
+La energía reactiva, medida en kilovoltamperios reactivos-hora (kVArh), surge de la presencia de cargas inductivas y capacitivas en la red. A diferencia de la energía activa, no realiza trabajo útil; en cambio, oscila entre la fuente y las cargas, generando corriente circulante que incrementa las pérdidas en conductores y transformadores. Su efecto más visible es el aumento de la corriente eficaz para un mismo nivel de potencia activa, lo que eleva la cargabilidad de los equipos y puede deteriorar la calidad del suministro. 
+
+### Factor de Potencia (FP) y Triángulo de Potencias
+El factor de potencia (FP) es el indicador central de eficiencia en el uso de la energía eléctrica. En términos energéticos mensuales se define como:
+FP=A/√((A^2+R^2))
+donde A es la energía activa (kWh) y R la energía reactiva (kVArh). El denominador representa la energía aparente S (kVAh), de modo que FP = A/S. Esta relación se visualiza mediante el triángulo de potencias, en cuyo eje horizontal se sitúa la potencia activa P (kW), en el eje vertical la potencia reactiva Q (kVAr), y la hipotenusa corresponde a la potencia aparente S (kVA). El ángulo φ entre S y P satisface cos φ = FP.
+Un FP cercano a la unidad indica que la energía suministrada se emplea casi completamente en trabajo útil; valores bajos implican mayor corriente reactiva, con las consecuentes pérdidas adicionales y posibles penalizaciones tarifarias. Para fines operativos, el cumplimiento del umbral FP ≥ 0,90 puede expresarse como la condición equivalente R/A ≤ 0,485, criterio directamente verificable con los registros mensuales de facturación.
+
+### Cargas Inductivas y Capacitivas
+Las cargas inductivas —motores, transformadores, balastos electromagnéticos— absorben potencia reactiva positiva (inductiva), retrasando la corriente respecto al voltaje y reduciendo el FP. Las cargas capacitivas —condensadores, variadores de velocidad con filtros, baterías de condensadores— generan potencia reactiva negativa, compensando parcial o totalmente la demanda inductiva. En una instalación real, el balance neto de reactivos determina el signo y la magnitud del Q total y, por tanto, la posición del FP respecto al umbral regulatorio.
+
+### Corrección del Factor de Potencia
+La corrección del FP consiste en instalar elementos de compensación reactiva que reduzcan la demanda de potencia reactiva desde la red. Las alternativas más comunes son:
+- Bancos de condensadores fijos o automáticos, conectados en paralelo con las cargas inductivas.
+- Variadores de velocidad (VFD) con control de factor de potencia integrado.
+- Filtros activos de potencia que inyectan corrientes de compensación en tiempo real.
+- Condensadores sintonizados para la mitigación simultánea de armónicos.
+
+### Calidad de la Energía Eléctrica
+La calidad de la energía eléctrica abarca un conjunto de características del suministro que afectan el correcto funcionamiento de los equipos conectados a la red. Los principales indicadores de calidad incluyen:
+- Factor de potencia: relación entre potencia activa y potencia aparente.
+- Contenido armónico (THD): presencia de componentes de frecuencia distintas a la fundamental (60 Hz en Colombia), generadas por cargas no lineales como equipos de cómputo, fuentes conmutadas e inversores.
+- Variaciones de tensión: desviaciones del valor nominal que pueden producir fallos o deterioro prematuro en equipos sensibles.
+- Flicker: fluctuaciones rápidas de la tensión perceptibles como parpadeo luminoso.
+- Interrupciones y transitorios: cortes o perturbaciones breves que comprometen la continuidad del servicio.
+
+### Análisis Estadístico de Series de Tiempo y Pronóstico
+El consumo eléctrico mensual de la sede central constituye una serie de tiempo con múltiples fuentes de variación: tendencia de largo plazo, estacionalidad, autocorrelación, efectos de variables externas, posibles rupturas estructurales y heterocedasticidad. Esta sección desarrolla el marco metodológico para modelar, diagnosticar y pronosticar dicha serie.
+
+### Serie de Tiempo
+Una serie de tiempo es una sucesión de observaciones de una variable, indexadas por el tiempo y ordenadas cronológicamente. En consumo eléctrico, cada observación corresponde a un registro mensual de energía activa (kWh) o reactiva (kVArh). Las propiedades estadísticas de la serie —media, varianza, autocovarianza— pueden depender del instante temporal (no estacionariedad) o permanecer constantes (estacionariedad), condición que determina la elección de la familia de modelos apropiada.
+
+### Tendencia, Estacionalidad y Componente Irregular
+La descomposición clásica de una serie de tiempo identifica tres componentes principales:
+- Tendencia (T): comportamiento de largo plazo que refleja cambios estructurales en el nivel medio de la serie, asociados en este contexto a expansión de infraestructura, incorporación de nuevas cargas o modificaciones sostenidas en el uso de los edificios.
+- Estacionalidad (S): fluctuaciones periódicas y predecibles que se repiten con la misma frecuencia e intensidad en cada ciclo. En un campus universitario, la estacionalidad mensual está vinculada al calendario académico (semestres, periodos vacacionales, exámenes) y a las condiciones climáticas.
+- Componente irregular o residual (R): variaciones no explicadas por tendencia ni estacionalidad, que incluyen ruido aleatorio y efectos de eventos no recurrentes.
+La descomposición puede ser aditiva (Yt = T + S + R) o multiplicativa (Yt = T × S × R), según si los componentes interactúan de forma lineal o proporcional. La metodología STL (Seasonal and Trend decomposition using Loess) es especialmente útil por su robustez frente a valores atípicos y su capacidad para capturar estacionalidad cambiante en el tiempo.
+
+### Estacionariedad y Pruebas de Raíz Unitaria
+La estacionariedad es la propiedad por la cual los momentos estadísticos de la serie (media y varianza, en sentido débil) no cambian con el tiempo. La mayoría de los modelos clásicos de series de tiempo exigen estacionariedad o su consecución mediante transformaciones.
+La prueba de Dickey-Fuller Aumentada (ADF) contrasta la hipótesis nula de presencia de raíz unitaria (no estacionariedad) frente a la alternativa de estacionariedad. La prueba KPSS, de carácter complementario, contrasta la hipótesis nula de estacionariedad frente a la alternativa de raíz unitaria. El uso conjunto de ambas pruebas reduce el riesgo de decisiones erróneas: si ADF rechaza raíz unitaria y KPSS no rechaza estacionariedad, hay evidencia sólida a favor de estacionariedad; si ambas apuntan en sentido contrario, la evidencia es igualmente sólida a favor de no estacionariedad.
+Cuando la serie presenta raíz unitaria, la diferenciación de orden d transforma la serie en estacionaria; este orden queda incorporado en el componente I(d) de los modelos ARIMA.
+
+### Autocorrelación y Autocorrelación Parcial (ACF/PACF)
+La función de autocorrelación (ACF) mide la correlación entre la serie y sus propios retardos: ρ(k) = Corr(Yt, Yt−k). Permite identificar la memoria del proceso y detectar estacionalidad cuando presenta picos a múltiplos del periodo estacional (ej. lags 12, 24 para datos mensuales).
+La función de autocorrelación parcial (PACF) mide la correlación entre Yt e Yt−k una vez eliminado el efecto de los retardos intermedios. Su análisis conjunto con la ACF es la herramienta clásica de identificación de órdenes en modelos AR y MA:
+- ACF decreciente lentamente y PACF con corte abrupto → proceso AR(p).
+- ACF con corte abrupto y PACF decreciente → proceso MA(q).
+- Ambas con decaimiento gradual → proceso ARMA(p,q).
+En series con componente estacional, los correlogramas exhiben además picos pronunciados en los rezagos múltiplos del periodo S, lo que orienta la especificación de los términos estacionales del modelo.
+
+### Modelos ARIMA, SARIMA y SARIMAX
+Los modelos ARIMA(p,d,q) representan la serie como combinación de componentes autorregresivos (AR), integrados (I) y de promedios móviles (MA). La diferenciación de orden d induce estacionariedad; los órdenes p y q capturan la dinámica de corto plazo del proceso estacionario resultante. La metodología Box-Jenkins formaliza el ciclo iterativo de identificación, estimación y diagnóstico de estos modelos.
+Los modelos SARIMA(p,d,q)(P,D,Q)S extienden ARIMA incorporando términos estacionales análogos —AR estacional de orden P, diferenciación estacional de orden D, MA estacional de orden Q— con periodo S. Esta estructura permite reproducir simultáneamente la dinámica de corto plazo y los ciclos regulares anuales del consumo.
+Los modelos SARIMAX añaden variables exógenas (X) al modelo SARIMA, formalizando la incorporación de covariables observables como temperatura, precipitación o indicadores del calendario académico. Esto permite separar el efecto de la dinámica interna del proceso del efecto de factores externos conocidos, mejorando tanto la capacidad explicativa del modelo como su precisión predictiva bajo distintos escenarios.
+La selección del modelo óptimo dentro de cada familia se apoya en criterios de información como AIC (Akaike Information Criterion) y BIC (Bayesian Information Criterion), que penalizan la complejidad del modelo para evitar el sobreajuste.
+
+### Ruptura Estructural
+Una ruptura estructural es un cambio discreto en los parámetros del proceso generador de datos: salto en el nivel, variación en la tendencia o modificación de la estacionalidad. En el contexto universitario, rupturas típicas incluyen la habilitación de nuevos edificios, cambios de horario institucional, modernización tecnológica o eventos extraordinarios como la pandemia de COVID-19.
+Ignorar rupturas estructurales conduce a modelos que promedian regímenes distintos, deteriorando el pronóstico y ocultando interpretaciones relevantes. Los enfoques disponibles incluyen:
+- Incorporación de variables indicadoras (dummies) asociadas a periodos específicos en modelos ARIMAX.
+- Prueba de Bai-Perron para detección de múltiples puntos de quiebre endógenos en la muestra.
+- Modelos de cambio de régimen (Markov-switching) cuando los regímenes son recurrentes y no observables.
+
+### Validación Fuera de Muestra y Métricas de Error
+En series de tiempo, el desempeño dentro de muestra no garantiza capacidad predictiva fuera de ella. La evaluación fuera de muestra se implementa mediante backtesting o validación con origen rodante (rolling-origin cross-validation): se entrena el modelo con una ventana histórica, se pronostica el horizonte siguiente, se avanza la ventana y se repite el proceso. Esta práctica produce estimaciones del error de pronóstico representativas de la operación real.
+Las métricas principales de error son:
+- MAE (Mean Absolute Error): error absoluto promedio, en las mismas unidades que la serie.
+- RMSE (Root Mean Squared Error): raíz del error cuadrático medio, más sensible a errores grandes.
+- MAPE (Mean Absolute Percentage Error): error relativo promedio, facilita comparaciones entre series de distinta escala.
+
+### Modelos de Aprendizaje Automático para Series de Tiempo
+Como benchmark de desempeño predictivo se consideran modelos de aprendizaje automático (ML) capaces de capturar relaciones no lineales y efectos de interacción entre variables sin imponer supuestos paramétricos fuertes. Los algoritmos más empleados en pronóstico de series de tiempo incluyen:
+- Extra Trees (Extremely Randomized Trees): conjunto de árboles de decisión con umbrales de corte aleatorizados, que promedian predicciones para reducir varianza.
+- XGBoost (Extreme Gradient Boosting): ensamble secuencial de árboles que minimiza el error de predicción mediante boosting con regularización L1/L2.
+La aplicación de modelos ML a series de tiempo requiere ingeniería de características temporales —rezagos de la variable objetivo, medias móviles, indicadores de período estacional, variables de calendario— y una validación cruzada que respete el orden temporal (time-series cross-validation). La evaluación con las mismas métricas y el mismo conjunto de prueba que los modelos clásicos permite determinar si el poder predictivo adicional de ML justifica la pérdida de interpretabilidad.
+La importancia de variables en los modelos ML (por ejemplo, permutation importance o SHAP values) ofrece un mecanismo de explicación que, aunque no equivalente a los coeficientes de un modelo lineal, proporciona información sobre los determinantes del consumo relevante para la toma de decisiones.
+
+### Detección de Anomalías en Series de Tiempo
+La detección de anomalías identifica observaciones que se desvían significativamente del patrón esperado de la serie. En series de consumo eléctrico, las anomalías pueden deberse a errores de medición, fallas en equipos, eventos operativos inusuales o fraude. Su tratamiento previo al modelado mejora la calidad del ajuste y evita que los modelos sean distorsionados por valores atípicos. Siguiendo la tipología de métodos basados en datos propuesta por Li et al. (2025) para sistemas edilicios, los residuos estadísticos de un modelo predictivo operan como indicadores de desviación operativa (residuos > ±2.5σ), permitiendo un diagnóstico no supervisado robusto ante la ausencia de un modelo físico del edificio.
+Los enfoques más comunes incluyen:
+- Métodos basados en residuos del modelo: puntos con residuos superiores a un umbral (p. ej., ±3σ) se etiquetan como anómalos.
+- Algoritmos de detección no supervisada: Isolation Forest, DBSCAN o Local Outlier Factor, aplicados sobre el espacio de características temporales.
+- Modelos de predicción en ventana deslizante: se etiqueta como anomalía cualquier punto cuyo error de predicción supere un umbral predefinido.
+
+### Análisis de Sensibilidad y Escenarios
+El análisis de sensibilidad evalúa cómo cambian las predicciones del modelo ante variaciones en las variables de entrada o en los parámetros estimados. En el contexto de gestión energética, permite responder preguntas del tipo: ¿cuánto aumenta el consumo ante un incremento de 1 °C en la temperatura media mensual? ¿Cuál sería el consumo proyectado si se amplía la infraestructura en un 15%?
+El análisis de escenarios extiende este enfoque construyendo trayectorias alternativas consistentes de las variables exógenas (escenario base, optimista, pesimista) y evaluando el consumo esperado en cada caso. Esto es especialmente valioso para la planificación presupuestaria y la evaluación de inversiones en eficiencia energética, pues cuantifica el rango plausible de la demanda futura bajo distintos supuestos operativos.
+
+## Marco Regulatorio, Institucional y de Gestión Energética
+El análisis del consumo eléctrico de la USCO no puede desvincularse del entorno normativo que regula la calidad de la energía y la estructura tarifaria en Colombia, ni de las condiciones institucionales y de gestión propias de las instituciones de educación superior. Este bloque sintetiza los elementos regulatorios y de gestión que contextualizan y condicionan las decisiones energéticas del campus.
+
+### Marco Regulatorio Colombiano del Factor de Potencia
+En Colombia, la regulación del factor de potencia en el nivel de distribución y comercialización del servicio eléctrico está establecida principalmente por la Comisión de Regulación de Energía y Gas (CREG). La normativa vigente define umbrales mínimos de FP —tipicamente FP ≥ 0,90— por debajo de los cuales los usuarios incurren en cargos adicionales por energía reactiva. Estos cargos buscan internalizar en el usuario el costo de la infraestructura adicional requerida para transportar corriente reactiva.
+La condición operativa equivalente R/A ≤ 0,485 permite verificar mensualmente, a partir de los registros de facturación, si el campus cumple o supera el umbral regulatorio. Los meses en que se incumple el umbral representan períodos de sobrecosto evitable mediante corrección del FP, lo que justifica el análisis sistemático de esta variable como indicador de desempeño y como criterio de alerta temprana.
+Adicionalmente, la CREG y el Ministerio de Minas y Energía han emitido resoluciones y circulares sobre calidad del suministro, medición de energía y condiciones técnicas de conexión que complementan el régimen del factor de potencia y configuran el entorno normativo integral del usuario no regulado o gran consumidor.
+
+### Estructura Tarifaria del Servicio Eléctrico en Colombia
+La tarifa del servicio eléctrico para usuarios no regulados en Colombia se compone de varios cargos: generación, transmisión, distribución, comercialización y restricciones. Para usuarios de media y alta tensión con medición de energía activa y reactiva, la facturación puede incluir:
+- Cargo por energía activa (kWh): componente principal de la factura, proporcional al consumo.
+- Cargo por demanda máxima (kW): refleja el costo de la infraestructura dimensionada para atender la punta de demanda.
+- Cargo por energía reactiva (kVArh): penalización cuando el FP se sitúa por debajo del umbral regulatorio.
+- Otros cargos: alumbrado público, contribuciones especiales y ajustes por pérdidas técnicas.
+La comprensión de esta estructura es fundamental para cuantificar el impacto económico del factor de potencia: una reducción del FP por debajo del umbral no solo implica mayor consumo aparente, sino también cargos directos por reactivos que elevan el costo total del servicio. El análisis histórico de la facturación permite estimar la magnitud de las penalizaciones acumuladas y proyectar el ahorro potencial derivado de la corrección.
+
+### Gestión Energética en Instituciones de Educación Superior
+Las instituciones de educación superior presentan características de consumo eléctrico singulares: alta densidad de cargas distribuidas en múltiples edificios de uso heterogéneo, patrones de ocupación determinados por el calendario académico, variedad de equipos con distintos perfiles de carga, y restricciones presupuestarias que condicionan el horizonte de inversión en eficiencia energética.
+La gestión energética en este contexto se orienta a tres objetivos complementarios: reducción del consumo total (eficiencia), mejora de la calidad del uso (factor de potencia, armónicos) y reducción del costo unitario (optimización tarifaria). La implementación de sistemas de gestión energética (SGE) conforme a la norma ISO 50001 proporciona un marco estructurado que incluye política energética, planificación, implementación, seguimiento y revisión por la dirección. En este sentido, Castrillón (2021) desarrolló un marco de herramientas de gestión energética aplicado a un campus universitario, evidenciando que la estimación de líneas base, la selección de variables significativas y el benchmarking son elementos metodológicos fundamentales para la planificación y revisión energética.
+En el ámbito latinoamericano, diversas universidades han desarrollado programas de gestión energética que combinan auditorías técnicas, sistemas de monitoreo en tiempo real, campañas de sensibilización y análisis de datos para identificar oportunidades de mejora. La experiencia acumulada en estas instituciones evidencia que el análisis estadístico del consumo histórico es un insumo indispensable para priorizar intervenciones y evaluar su impacto posterior.
+
+### Sistemas de Información y Repositorios de Datos Energéticos
+La calidad del análisis estadístico depende directamente de la disponibilidad, integridad y granularidad de los datos energéticos. En una institución universitaria, los datos de consumo eléctrico pueden provenir de distintas fuentes:
+- Facturas del proveedor de energía: registros mensuales de energía activa, reactiva y demanda máxima. Constituyen la fuente primaria más accesible pero con resolución temporal limitada.
+- Medidores de intervalo (AMI/AMR): equipos que registran consumo en intervalos cortos (15 min, 1 h), habilitando análisis de carga detallado y detección de patrones intradía.
+La construcción de un repositorio de datos energéticos institucional, con procedimientos documentados de recolección, validación y almacenamiento, es condición necesaria para el monitoreo continuo del desempeño energético y para la alimentación de modelos predictivos actualizados.
+
+### Indicadores de Desempeño Energético (IDEn)
+Los indicadores de desempeño energético (IDEn) son métricas cuantitativas que permiten evaluar la eficiencia del uso de la energía respecto a una línea de base o a un valor de referencia. En el contexto universitario, los IDEn más relevantes incluyen:
+- Intensidad energética (kWh/m²): consumo por unidad de área construida, útil para comparar el desempeño entre edificios o entre periodos con distinta superficie en uso.
+- Intensidad por usuario (kWh/estudiante): consumo normalizado por la población de la institución, que controla el efecto del tamaño.
+- Factor de potencia promedio mensual: porcentaje de meses en cumplimiento del umbral FP ≥ 0,90 en el periodo analizado.
+- Costo de energía reactiva / costo total: proporción de la factura atribuible a penalizaciones por bajo FP.
+- Índice de reducción de consumo: variación porcentual del consumo respecto a la línea de base, ajustada por variables de normalización (área, ocupación, clima).
+El seguimiento sistemático de los IDEn mediante tableros de control (dashboards) facilita la comunicación de resultados a la alta dirección, la identificación temprana de desviaciones y la evaluación objetiva del impacto de las medidas implementadas. En conjunto con los modelos de pronóstico desarrollados en el Bloque II, los IDEn permiten cerrar el ciclo de gestión energética: medir, modelar, intervenir y verificar.
+
+
+
+
+
+# Metodología
+
+> 
+
+Esta sección describe el proceso de recolección, auditoría y acondicionamiento de los registros históricos. Inicialmente, se presenta el perfil estadístico de la base de datos cruda para dimensionar la calidad de la información, seguido por la justificación de los algoritmos de imputación y las reglas de armonización aplicadas para garantizar la continuidad temporal exigida por los modelos predictivos.
+
+## Fuente de datos y Perfil Estadístico Inicial
+
+La información base proviene de la plataforma comercial de Electrohuila, que suministró el histórico de facturación de las 5 subestaciones de la Sede Central. Antes de someter los datos a cualquier transformación, se elaboró una radiografía estadística de los datos crudos para cuantificar la presencia de caídas de medición (valores en cero).
+
+```{r perfil_estadistico}
+#| label: tbl-perfil-estadistico
+#| tbl-cap: "Perfil estadístico de la base de datos cruda (sin imputación)"
+stats_crudas <- read_csv(here("data", "processed", "Estadisticas_Crudas.csv"), show_col_types = FALSE)
+names(stats_crudas) <- c("Cuenta", "N Registros", "Media Activa", "SD Activa", "% Nulos Activa", "Media Reactiva", "% Nulos Reactiva")
+
+apa_flextable(stats_crudas)
+```
+
+## Consolidación y ventana de análisis (Datos depurados)
+
+La inspección inicial de la base de datos histórica (2001–2025) evidenció que los registros previos a 2014 carecían de la continuidad y granularidad necesarias a nivel de subestación. Para garantizar la solidez estadística y la precisión de los modelos predictivos, se descartaron los primeros años y se estableció una ventana de análisis consolidada de 139 meses continuos (Enero 2014 – Julio 2025). Este subconjunto de datos depurado provee una etapa pre-pandemia extensa (6 años) para capturar la estacionalidad académica de forma limpia, y finaliza en el último mes con facturación completa, asegurando que los modelos se entrenen con información íntegra y representativa de la infraestructura actual.
+
+```{r tabla_resumen_ventana}
+#| label: tbl-resumen-ventana
+#| tbl-cap: "Resumen de los datos de la ventana de análisis"
+df <- read_csv(file.path(RUTA_DATOS, "Serie_Sede_Desde2014.csv"), show_col_types = FALSE)
+df_central <- read_csv(file.path(RUTA_DATOS, "Detalle_Cuenta_Desde2014.csv"), show_col_types = FALSE)
+
+resumen_carga <- data.frame(
+  Concepto = c("Períodos en la ventana de análisis",
+               "Fecha inicio", "Fecha fin",
+               "Cuentas activas",
+               "Umbral normativo R/A"),
+  Valor = c(as.character(nrow(df)),
+            paste(min(df$Ano), formatC(min(df$Mes[df$Ano == min(df$Ano)]),
+                                       width = 2, flag = "0"), sep = "-"),
+            paste(max(df$Ano), formatC(max(df$Mes[df$Ano == max(df$Ano)]),
+                                       width = 2, flag = "0"), sep = "-"),
+            as.character(length(unique(df_central$Cuenta))),
+            as.character(UMBRAL_FP))
+)
+
+apa_flextable(resumen_carga)
+```
+
+## Depuración y Armonización
+
+Para corregir los periodos con medición en cero evidenciados en la @tbl-perfil-estadistico (especialmente en subestaciones con operación ininterrumpida como `Central_2`), se aplicó una imputación basada en la media histórica mensual de cada cuenta (Little & Rubin, 2019). La @fig-imputacion valida gráficamente este enfoque, demostrando que la técnica reconstruyó la continuidad temporal sin alterar la tendencia original de la serie.
+
+```{r plot_imputacion}
+#| label: fig-imputacion
+#| fig-cap: "Validación metodológica de la imputación de ceros anómalos"
+knitr::include_graphics(here("data", "processed", "plots", "Imputacion_Antes_Despues.png"))
+```
+
+*Nota.* Gráfico de la subestación Central_2 contrastando la serie cruda frente a la suavizada mediante promedios históricos. (Script: 01_Preprocesamiento.R)
+
+### DECISIÓN 1 — Umbral normativo unificado
+**Criterio aplicado:** R/A ≤ 0.50 (límite del 50% de la energía activa mensual para niveles de tensión I y II)
+
+**Justificación:** El anteproyecto establecía inicialmente el umbral de factor de potencia en 0.90 (relación R/A = 0.4843). Sin embargo, de acuerdo a la reglamentación de la CREG para usuarios en los niveles de tensión I y II (como las subestaciones de la Sede Central), se permite el transporte de energía reactiva inductiva hasta un valor equivalente al 50% de la energía activa del período sin generar cobro por exceso (R/A ≤ 0.50).
+
+**Impacto:** Recálculo de la variable `Cumple` y `Excedente` en todos los archivos procesados usando 0.50.
+
+### DECISIÓN 2 — Ventana temporal de 139 meses (2014–2025)
+**Criterio aplicado:** Enero 2014 (período 153) a Julio 2025 (período 291).
+
+**Justificación:**
+
+- Se expande el análisis desde 2014 en adelante para obtener una base estacional sólida e histórica pre-pandemia (6 años) y se segmenta el análisis en tres fases para aislar el shock del COVID-19 y evaluar el cambio de comportamiento en la Nueva Normalidad:
+  * **Pre-pandemia (Enero 2014 – Febrero 2020):** 74 meses estables para calibrar patrones.
+  * **Pandemia y Transición (Marzo 2020 – 6 de Julio 2023):** 40 meses de caída en la demanda y desajuste de calendarios académicos.
+  * **Nueva Normalidad (7 de Julio 2023 – Julio 2025):** 25 meses de operación presencial regular e incorporación de nueva infraestructura (Central_3).
+- Agosto y septiembre 2025 se excluyen por estar en período de facturación incompleto al momento de la extracción de datos.
+- La serie resultante tiene **139 períodos consecutivos sin huecos** cronológicos, habiéndose completado mediante imputación por media mensual los ceros intermedios.
+
+### DECISIÓN 3 — Tratamiento de Central_5
+**Criterio aplicado:** Incluida en la serie agregada; excluida del análisis individual.
+
+**Justificación:** La exploración inicial reveló que `Central_5` presenta una proporción R/A superior a 7.0, lo cual es físicamente inconsistente con una operación normal (implicaría FP < 0.14) y se trata como falla sostenida de medición. Su peso en el total agregado es inferior al 3%, por lo que su inclusión no distorsiona el consolidado de Sede, pero su altísima varianza destruye cualquier intento de modelado individual.
+
+```{r validacion_c5}
+#| label: fig-central5
+#| fig-cap: "Exploración de datos atípicos y error de medición en la subestación Central_5"
+knitr::include_graphics(here("data", "processed", "plots", "Central_5_Outliers.png"))
+```
+
+### DECISIÓN 4 — Incorporación de Central_3
+**Criterio aplicado:** Incluida en la serie agregada desde junio 2023 (período 265).
+
+**Justificación:** Central_3 corresponde a la medición del nuevo edificio que entró en operación en junio 2023. Su incorporación generó una redistribución interna del consumo de la sede, pero no un salto neto anómalo en la "envolvente" total de energía, dado que la población universitaria no creció súbitamente (la masa de consumidores simplemente se redistribuyó en los espacios).
+
+```{r validacion_c3}
+#| label: fig-central3
+#| fig-cap: "Comportamiento del consumo tras la incorporación de la subestación Central_3"
+knitr::include_graphics(here("data", "processed", "plots", "Central_3_Incorporacion.png"))
+```
+
+### DECISIÓN 5 — Variables de intervención puntual
+**Criterio aplicado:** Dummies para enero 2023 y septiembre 2024.
+
+**Enero 2023 (período 264):** El semestre académico inició el 10 de enero de 2023 como parte del proceso de nivelación de calendarios post-pandemia. Esto generó un mes con comportamiento mixto — parte vacacional, parte académico — que el modelo interpreta como valor atípico. Justificación documentada en el calendario académico institucional.
+
+**Septiembre 2024 (período 280):** El valor registrado en este mes experimentó una caída abrupta que superó el umbral de 2.5 desviaciones estándar sobre la media móvil de la serie. Al representar un valor estadísticamente anómalo y atípico en la medición de la cuenta principal, se introdujo como variable de intervención puntual (Outlier Aditivo) para evitar la distorsión del ajuste de los modelos predictivos.
+
+### DECISIÓN 6 — Estrategia de modelado (Rechazo de Reactiva)
+**Series modeladas:**
+
+1. **Energía activa agregada (kWh):** Serie principal para pronóstico de demanda. Objetivo 3.
+2. **Relación R/A agregada:** Serie para monitoreo normativo. Objetivo 3. Se aplica transformación logit (Cox, 1970) dado que es un cociente acotado en (0,1).
+3. **Excedente reactivo de Central_2 (kVArh):** Serie para cuantificación económica. Objetivo 5.
+
+**Justificación del Rechazo al Modelado Directo de Energía Reactiva:**
+El diagnóstico de residuos del modelo ARIMA para la serie de energía reactiva arrojó errores catastróficos en validación fuera de muestra. La alta volatilidad de la reactiva (que colapsa en vacaciones mientras la activa solo cae parcialmente) supera la capacidad explicativa univariada. 
+
+```{r validacion_mape}
+#| label: tbl-comparativa-logit
+#| tbl-cap: "Comparativa de error de pronóstico: reactiva directa vs transformación logit"
+df_mape <- read_csv(here("data", "processed", "MAPE_Reactiva_vs_Logit.csv"), show_col_types = FALSE)
+
+apa_flextable(df_mape)
+```
+
+Por esta razón, el pronóstico futuro de la reactiva se obtiene matemáticamente como el producto de los dos modelos robustos: $Pronóstico\_Activa \times Pronóstico\_(R/A)$.
+
+---
+
+## Metodología de estimación
+
+**Criterio metodológico — Rango de Incertidumbre Tarifaria.**
+
+Dado que las facturas incluyen componentes no separables y precios variables, la estimación aplica estrictamente la fórmula CREG ($CTER = Excedente \times D \times M$). Sin embargo, la Resolución CREG 015 estipula que la acumulación del factor $M$ requiere que el límite de reactiva se supere durante más de 10 días al mes. Al disponer solo de agregados mensuales y carecer de telemetría diaria, existe una incertidumbre técnica infranqueable sobre la acumulación temporal exacta del factor.
+
+Por esta razón, las pérdidas económicas no se cuantifican de forma determinística, sino mediante un **rango de incertidumbre tarifaria** delimitado por dos fronteras (utilizando el Cargo por Distribución $D = 130$ COP/kVArh vigente para el Nivel de Tensión II en el mercado regional pospandemia):
+- **Límite Inferior (Escenario Optimista, M=1):** Asume que los incumplimientos mensuales fueron esporádicos ($\le 10$ días). Calcula el costo físico puro de la reactiva excedente, sin el recargo por reincidencia.
+- **Límite Superior (Escenario Pesimista, M Acumulado):** Asume un incumplimiento ininterrumpido ($> 10$ días), forzando el crecimiento consecutivo de la variable $M$ hasta su tope regulatorio de 12.
+
+*Nota metodológica:* El anteproyecto de investigación planteaba inicialmente la modelación de un tercer escenario (Escenario de Expansión de Infraestructura). Sin embargo, este fue excluido de la ejecución final debido a la carencia de los planos eléctricos y el cuadro de cargas proyectado para los futuros edificios, información indispensable para realizar una simulación técnica rigurosa.
+
+# Resultados
+
+Este capítulo presenta los hallazgos empíricos de la investigación, estructurados en cuatro ejes fundamentales. Inicialmente, se expone el análisis exploratorio de las series temporales para comprender sus patrones históricos. Posteriormente, se evalúa el desempeño predictivo de las distintas arquitecturas de modelado estadístico y de aprendizaje automático. Luego, se profundiza en la desagregación por subestación para aislar el foco del incumplimiento normativo y proponer un esquema multicapa de detección de anomalías. Finalmente, se cuantifica el impacto económico del exceso de energía reactiva en el escenario más crítico.
+
+## Análisis exploratorio de datos (EDA)
+
+El Análisis Exploratorio de Datos (EDA) constituye la primera fase de inspección visual y estadística del comportamiento histórico de la sede. Su propósito es identificar la tendencia de largo plazo, la fuerza de la estacionalidad académica y la presencia de posibles valores atípicos que justifiquen decisiones metodológicas en la fase de modelado (como la inclusión de variables indicadoras o *dummies*).
+
+### Serie de energía activa agregada
+
+```{r eda_activa_raw}
+#| label: fig-activa-raw
+#| fig-cap: "Serie histórica de consumo de energía activa agregada"
+# Serie cruda
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_01_raw.png"))
+```
+
+*Nota.* La serie muestra una tendencia creciente desde octubre 2022 hasta mediados de 2024, seguida de una estabilización. El patrón estacional es consistente con el calendario académico: picos en febrero-marzo (inicio semestre), mayo (fin primer semestre), agosto-septiembre (inicio y fin segundo semestre), y valles en enero, junio-julio y diciembre (períodos de vacaciones). (Script: 03_EDA.R)
+
+```{r eda_activa_stl}
+#| label: fig-activa-stl
+#| fig-cap: "Descomposición estacional STL de la energía activa"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_02_stl.png"))
+```
+
+*Nota.* La descomposición STL (Cleveland et al., 1990) confirma tres componentes diferenciables: tendencia creciente hasta 2024 que refleja el retorno progresivo a la normalidad post-pandemia; componente estacional estable y repetible con amplitud de ±80.000 kWh; y componente de remainder con dos valores atípicos identificados (enero 2023 y septiembre 2024) que justifican las variables de intervención de la Decisión 5. (Script: 03_EDA.R)
+
+```{r eda_activa_seasonal}
+#| label: fig-activa-seasonal
+#| fig-cap: "Patrón estacional de la energía activa"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_03_seasonal.png"))
+```
+
+```{r eda_activa_boxplot}
+#| label: fig-activa-boxplot
+#| fig-cap: "Distribución mensual del consumo de energía activa"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_04_boxplot.png"))
+```
+
+*Nota.* El boxplot mensual confirma dos grupos claramente diferenciados: meses académicos (febrero, marzo, mayo, agosto, septiembre, octubre, noviembre) con consumo entre 160.000 y 250.000 kWh, y meses de vacaciones (enero, junio, julio, diciembre) con consumo entre 80.000 y 130.000 kWh. Esta separación justifica el uso de la variable Vacaciones como covariable en los modelos SARIMAX. (Script: 03_EDA.R)
+
+### Serie de energía reactiva agregada
+
+```{r eda_reactiva_raw}
+#| label: fig-reactiva-raw
+#| fig-cap: "Serie histórica de consumo de energía reactiva agregada"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_01_raw.png"))
+```
+
+```{r eda_reactiva_stl}
+#| label: fig-reactiva-stl
+#| fig-cap: "Descomposición estacional STL de la energía reactiva"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_02_stl.png"))
+```
+
+*Nota.* La STL de reactiva muestra una tendencia en forma de arco — creciente hasta mediados de 2024 y decreciente después — que coincide con la incorporación de Central_3 (junio 2023) y la posterior estabilización de sus cargas. El remainder identifica una anomalía severa en junio-julio 2025 (caída a ~12.000 kVArh), que contrasta con el patrón histórico de esos meses (~40.000 kVArh). Este período se investiga en la sección de detección de anomalías. (Script: 03_EDA.R)
+
+```{r eda_reactiva_seasonal}
+#| label: fig-reactiva-seasonal
+#| fig-cap: "Patrón estacional de la energía reactiva"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_03_seasonal.png"))
+```
+
+```{r eda_reactiva_boxplot}
+#| label: fig-reactiva-boxplot
+#| fig-cap: "Distribución mensual del consumo de energía reactiva"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_04_boxplot.png"))
+```
+
+### Relación R/A agregada
+
+El análisis exploratorio de la relación R/A agregada revela que, en términos globales, la sede operó consistentemente por debajo del límite normativo de 0.50 hasta el año 2023. Sin embargo, la gráfica de tendencia muestra un quiebre al alza a partir del segundo semestre de 2023, donde el índice agregado se eleva sostenidamente. Adicionalmente, el patrón estacional y los diagramas de caja (boxplots) confirman que el riesgo de superar el umbral es drásticamente mayor durante los meses de vacaciones estudiantiles (especialmente diciembre y enero), debido a que el consumo de energía activa "base" cae bruscamente, inflando artificialmente el cociente matemático.
+
+```{r eda_relacion}
+#| label: fig-relacion-raw
+#| fig-cap: "Evolución histórica de la relación R/A agregada"
+# Gráficos generados por 04_Modelado_ARIMA.R
+knitr::include_graphics(file.path(RUTA_PLOTS, "Relacion_01_raw.png"))
+```
+
+*Nota.* (Script: 04_Modelado_ARIMA.R)
+
+```{r eda_relacion_stl}
+#| label: fig-relacion-stl
+#| fig-cap: "Descomposición estacional STL de la relación R/A"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Relacion_02_stl.png"))
+```
+
+```{r eda_relacion_seasonal}
+#| label: fig-relacion-seasonal
+#| fig-cap: "Patrón estacional de la relación R/A"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Relacion_03_seasonal.png"))
+```
+
+```{r eda_relacion_boxplot}
+#| label: fig-relacion-boxplot
+#| fig-cap: "Distribución mensual de la relación R/A"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Relacion_04_boxplot.png"))
+```
+
+### Análisis por cuenta
+
+Al desagregar el comportamiento por subestación, el panorama revela una profunda asimetrÍa interna. Como evidencia la @fig-cuentas, subestaciones como `Central_1` y `Central_4` mantienen un perfil eléctrico impecable, cumpliendo con la exigencia (R/A ≤ 0.50) en el 100% de los períodos. En contraste extremo, la subestación `Central_2` sufre de un problema crónico de factor de potencia, incumpliendo la norma ininterrumpidamente durante todo el horizonte histórico analizado. Esta dicotomía justifica la necesidad metodológica de modelar y estimar el impacto económico del exceso de reactiva enfocándose exclusivamente en `Central_2`, dado que el balance agregado de la Sede invisibiliza la varianza local de este foco de ineficiencia *(Los detalles exactos del cumplimiento anual por subestación se pueden consultar en el Apéndice A)*.
+
+```{r eda_cuentas}
+#| label: fig-cuentas
+#| fig-cap: "Evolución histórica de la relación R/A por subestación"
+knitr::include_graphics(here("data", "processed", "plots", "Cuentas_RA_TimeSeries.png"))
+```
+
+---
+
+## Modelado de series de tiempo
+
+## Pruebas de estacionariedad
+
+Antes de estimar los parámetros predictivos, es requisito matemático garantizar que las series temporales posean media y varianza constantes a lo largo del tiempo (estacionariedad). Para ello, se corrieron las pruebas estadísticas de Dickey-Fuller Aumentada (ADF; Dickey & Fuller, 1979) y Kwiatkowski-Phillips-Schmidt-Shin (KPSS; Kwiatkowski et al., 1992), apoyadas en la inspección visual de las funciones de autocorrelación simple (ACF) y parcial (PACF). La prueba ADF se ejecutó utilizando una especificación con constante y sin tendencia, determinando el número óptimo de rezagos mediante el criterio de información de Akaike (AIC; Akaike, 1974). Por su parte, la prueba KPSS se especificó en nivel empleando la estimación de varianza a largo plazo (kernel cuadrático espectral). Los resultados de este diagnóstico dictaminan el orden de integración ($d$) necesario para estabilizar matemáticamente cada serie.
+
+```{r estacionariedad_activa}
+#| label: fig-acf-activa
+#| fig-cap: "Funciones de autocorrelación (ACF/PACF) de la energía activa"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_05_acf_pacf.png"))
+```
+
+**Resultados — Energía Activa.**
+
+- **ADF (nivel):** estadístico = −6.51, p = 0.01 → rechaza raíz unitaria
+- **KPSS (nivel):** estadístico = 0.51, p = 0.039 → rechaza estacionariedad
+- **Interpretación:** Contradicción entre pruebas en nivel. Serie con raíz unitaria débil. Se confirma estacionariedad en primera diferencia: ADF p = 0.01, KPSS p = 0.10.
+- **Decisión:** d = 1
+
+```{r estacionariedad_reactiva}
+#| label: fig-acf-reactiva
+#| fig-cap: "Funciones de autocorrelación (ACF/PACF) de la energía reactiva"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Reactiva_05_acf_pacf.png"))
+```
+
+**Resultados — Energía Reactiva.**
+
+- **ADF (nivel):** estadístico = −4.51, p = 0.01 → rechaza raíz unitaria
+- **KPSS (nivel):** estadístico = 0.17, p = 0.10 → no rechaza estacionariedad
+- **Interpretación:** Ambas pruebas acuerdan estacionariedad en nivel.
+- **Decisión:** d = 0
+
+**Resultados — Relación R/A.**
+
+- **ADF (nivel):** estadístico = −3.6840, p = 0.0283 → rechaza raíz unitaria
+- **KPSS (nivel):** estadístico = 0.1392, p = 0.1000 → no rechaza estacionariedad
+- **Interpretación:** Ambas pruebas coinciden en que la serie de relación R/A transformada mediante logit es estacionaria en nivel.
+- **Decisión:** d = 0
+
+## Comparativa de modelos
+
+Con el orden de integración definido, se procedió a la fase de estimación calibrando múltiples arquitecturas predictivas. Para el caso de la energía activa, se contrastaron modelos econométricos tradicionales (SARIMA automáticos y manuales; Box et al., 2015) frente a extensiones multivariadas (SARIMAX incorporando dummies de vacaciones, clima y fases de pandemia). Asimismo, se evaluaron arquitecturas no lineales de aprendizaje automático, específicamente XGBoost (Chen & Guestrin, 2016) y ExtraTrees (Geurts et al., 2006). El criterio de selección absoluto para dictaminar el modelo campeón fue el menor Error Porcentual Absoluto Medio (MAPE) obtenido mediante una evaluación fuera de muestra con ventana fija de 6 meses y origen rodante (*rolling-origin*, h=1) (Hyndman & Athanasopoulos, 2021).
+
+A continuación, la @tbl-comparativa-modelos sintetiza los resultados de este proceso de validación cruzada. Estas métricas fueron calculadas aislando los últimos 6 meses de la serie para someter a los modelos a datos no observados durante su entrenamiento. Se invita al lector a prestar particular atención a la columna de MAPE (%), la cual dictaminará el algoritmo vencedor.
+
+```{r tabla_modelos_activa}
+#| label: tbl-comparativa-modelos
+#| tbl-cap: "Comparativa de modelos — Energía Activa (kWh)"
+tabla_activa <- read_csv(here("data", "processed", "Model_Comparison_ML.csv"), show_col_types = FALSE)
+names(tabla_activa) <- c("Modelo", "Especificación", "AICc", "BIC", "MAE", "RMSE", "MAPE (%)", "MASE")
+
+apa_flextable(tabla_activa,
+              nota    = "Métricas evaluadas fuera de muestra en el período de validación (Febrero 2025 - Julio 2025, h = 1, n_test = 6). Los modelos de Machine Learning (XGBoost, ExtraTrees) no estiman AICc/BIC al ser no-paramétricos. El modelo campeón según MAPE y MASE es el SARIMA Manual. (Script: 04_Modelado_ARIMA.R)")
+```
+
+### Análisis comparativo entre modelos econométricos y Machine Learning
+
+La comparación del desempeño predictivo fuera de muestra (@tbl-comparativa-modelos) revela importantes contrastes teóricos y prácticos:
+1. **Modelos Econométricos Clásicos (SARIMA/SARIMAX):** El **SARIMA Manual** se mantiene como el modelo con mejor precisión general, logrando el menor error fuera de muestra (MAPE = **8.02%** y MASE = **0.30**). Esto sugiere que la estructura lineal estacional y la inercia propia de la serie de consumo agregada son predictores sumamente estables.
+2. **Algoritmos de Aprendizaje Automático (ML):** El modelo **ExtraTrees** (implementado a través de árboles de decisión extremadamente aleatorios con `ranger`) demostró un excelente desempeño secundario con un MAPE de **10.10%** y MASE de **0.39**, superando incluso al modelo `SARIMAX Temperatura + Fases` (10.66%). **XGBoost**, por otro lado, obtuvo un MAPE ligeramente mayor (**12.71%**). 
+3. **Discusión sobre la cantidad de datos:** En series temporales macro-mensuales de mediana longitud (como este histórico de 139 observaciones), los algoritmos de ML suelen tener un riesgo mayor de sobreajuste (overfitting) debido a la gran cantidad de parámetros internos que estiman, lo cual explica por qué el SARIMA econométrico retiene la delantera predictiva. Sin embargo, la competitividad de ExtraTrees comprueba su robustez frente al ruido y su viabilidad como modelo alternativo no lineal capaz de capturar interacciones complejas.
+
+```{r comparativa_grafica_ml}
+# Cargar gráfico de comparación de pronósticos fuera de muestra
+knitr::include_graphics(file.path(RUTA_PLOTS, "Model_Comparison_Forecast.png"))
+```
+
+**Diagnóstico de Residuos — Ljung-Box.**
+
+El diagnóstico de residuos del modelo final ajustado sobre el período 2014-2025 demuestra, mediante la prueba de Ljung-Box (Ljung & Box, 1978), que la incorporación de las variables de fase (Pre-pandemia, Transición y Nueva Normalidad) ha permitido estabilizar la varianza y reducir significativamente el comportamiento de los residuos en los periodos del shock de pandemia, logrando un mejor ajuste global.
+
+```{r diagnostico_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_06_residuals_qq.png"))
+```
+
+```{r ljungbox_activa}
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_07_residuals_ljungbox.png"))
+```
+
+## Pronóstico energía activa
+
+Con base en el modelo econométrico campeón, se generó la predicción de la envolvente de energía activa para el horizonte de los próximos 6 meses (Agosto 2025 - Enero 2026). La gráfica de pronóstico evidencia la capacidad del algoritmo para anticipar y replicar el ciclo valle-pico inherente a la universidad: un incremento fuerte de demanda hacia el final del ciclo académico regular (agosto a noviembre) seguido de una contracción drástica y esperada en los meses de receso estudiantil de fin e inicio de año. A continuación, se reportan las estimaciones puntuales con sus intervalos probabilísticos de confianza.
+
+```{r pronostico_activa}
+#| label: fig-pronostico-activa
+#| fig-cap: "Pronóstico probabilístico de energía activa (6 meses)"
+knitr::include_graphics(file.path(RUTA_PLOTS, "Activa_08_forecast.png"))
+```
+
+*Nota.* (Script: 04_Modelado_ARIMA.R)
+
+```{r tabla_pronostico_activa}
+#| label: tbl-pronostico-activa
+#| tbl-cap: "Pronóstico energía activa — 6 meses (kWh)"
+pronostico_activa <- data.frame(
+  Mes        = c("2025-08","2025-09","2025-10","2025-11","2025-12","2026-01"),
+  Punto      = c(193528, 232373, 199744, 189388, 111099, 103425),
+  IC80_inf   = c(152863, 183727, 148134, 134974,  54022,  43822),
+  IC80_sup   = c(234193, 281019, 251355, 243801, 168176, 163029),
+  IC95_inf   = c(131337, 157975, 120813, 106170,  23807,  12270),
+  IC95_sup   = c(255719, 306771, 278675, 272606, 198390, 194581)
+)
+names(pronostico_activa) <- c("Mes", "Pronóstico", "IC80 inf.", "IC80 sup.", "IC95 inf.", "IC95 sup.")
+
+apa_flextable(pronostico_activa,
+              nota    = "Modelo: SARIMA(0,1,2)(1,1,1)[12] ajustado desde 2014. El pronóstico inicia en Agosto 2025 debido al truncado de la serie comercial.")
+```
+
+## Modelado de la relación R/A
+
+Tras evaluar el comportamiento de la energía activa, se procedió a modelar la serie de la relación reactiva/activa (R/A) agregada. Dado que se trata de un cociente, la serie original se sometió a una transformación logit para acotar sus límites matemáticos antes del ajuste paramétrico. La @tbl-pronostico-ra presenta los pronósticos puntuales e intervalos de confianza para los siguientes 6 meses, revertidos a la escala original para facilitar su interpretación normativa frente al umbral límite de 0.50.
+
+```{r modelo_relacion_tbl}
+#| label: tbl-pronostico-ra
+#| tbl-cap: "Pronóstico de relación R/A agregada — 6 meses"
+fc_ra <- read_csv(here("data", "processed", "RA_Forecast_Logit.csv"), show_col_types = FALSE)
+names(fc_ra) <- c("Mes", "Pronóstico R/A", "IC80 inf.", "IC80 sup.", "IC95 inf.", "IC95 sup.")
+
+apa_flextable(fc_ra,
+              nota    = "Modelo: ARIMA(1,0,0) con media ajustado sobre la serie transformada (logit). Los valores representan la relación reactiva/activa agregada con transformación inversa (función logística).")
+```
+
+```{r modelo_relacion_fig}
+#| label: fig-pronostico-ra
+#| fig-cap: "Pronóstico de la relación R/A agregada"
+knitr::include_graphics(here("data", "processed", "plots", "RA_Forecast_Logit.png"))
+```
+
+*Nota.* (Script: 04_Modelado_ARIMA.R)
+
+**Interpretación y Advertencia Metodológica:**
+
+El modelo automático seleccionado para la serie agregada de relación R/A transformada mediante logit es un **ARIMA(1,0,0) con media**, el cual captura la inercia temporal y autocorrelación de primer orden de la serie (Ljung-Box $p = 0.1955$, lo que indica ausencia de autocorrelación en los residuos). El pronóstico transformado inversamente a la escala original de relación R/A muestra valores que oscilan entre **0.1438** y **0.3703** para los próximos 6 meses (Agosto 2025 – Enero 2026). Todos estos valores esperados se encuentran significativamente por debajo del límite regulatorio de **0.50** a nivel agregado.
+
+**ADVERTENCIA METODOLÓGICA CRÍTICA:**
+Es fundamental advertir que este modelo opera a nivel consolidado o agregado de toda la Sede Central. Dado que la resolución CREG 015 de 2018 y la facturación del CTER se liquidan y cobran **estrictamente de forma individual por cada cuenta de servicio**, el análisis y modelado de la relación R/A agregada tiene un carácter exclusivamente metodológico y descriptivo general del campus, y carece de peso directo para la toma de decisiones económicas y operativas específicas. Asimismo, se advierte al lector que si se desea desagregar esta metodología para modelar cuentas individuales (como *Central_2*) que presenten meses con relaciones $R/A \ge 1.0$ (donde la energía reactiva sea mayor o igual a la activa), **la transformación logit perderá validez matemática por indeterminación logarítmica**. En dichos escenarios individuales, se debe sustituir de forma obligatoria la transformación logit por una **transformación logarítmica estándar** ($\log(R/A)$) para mantener la validez y continuidad matemática del modelado.
+
+---
+
+## Análisis por cuenta y detección de anomalías
+
+## Caracterización por tipo de comportamiento
+
+**Tipología de cuentas identificada.**
+
+**Tipo 1 — Cumplimiento estructural:** Central_1 (137/139 meses), Central_4 (139/139 meses). Cumplen normativa en prácticamente todos los períodos históricos. Análisis relevante: confirmar estabilidad y detectar desviaciones puntuales.
+
+**Tipo 2 — Incumplimiento estructural:** Central_2 (7/139 meses en cumplimiento). Incumple en el 95% de los períodos desde 2014. Análisis relevante: cuantificar excedente reactivo y estimar impacto económico CTER.
+
+**Tipo 3 — Comportamiento variable:** Central_5 (116/139 meses) y Central_3 (18/26 meses desde su inicio). Tienen variabilidad real en el cumplimiento. Análisis relevante: caracterizar patrones y estimar probabilidad de incumplimiento.
+
+La @tbl-ranking-cuentas consolida el ranking de las subestaciones y la @fig-factor-m muestra el impacto en el factor multiplicador M para Central_2.
+
+```{r analisis_cuentas_tbl}
+#| label: tbl-ranking-cuentas
+#| tbl-cap: "Ranking de cuentas por excedente reactivo acumulado en Nueva Normalidad (Jul 2023 - Jul 2025)"
+df_ranking_nn <- read_csv(here("data", "processed", "Ranking_Excedente_NuevaNormalidad.csv"), show_col_types = FALSE)
+
+apa_flextable(
+  df_ranking_nn %>% select(Nombre_Cuenta, Excedente_Acumulado_kVArh, Activa_Acumulada_kWh, Reactiva_Acumulada_kVArh, Relacion_Promedio, Meses_Incumplimiento, Participacion_Excedente_Pct) %>% rename(Cuenta = Nombre_Cuenta, `Excedente (kVArh)` = Excedente_Acumulado_kVArh, `Activa (kWh)` = Activa_Acumulada_kWh, `Reactiva (kVArh)` = Reactiva_Acumulada_kVArh, `Relación R/A Prom.` = Relacion_Promedio, `Meses Incumplimiento` = Meses_Incumplimiento, `% Participación` = Participacion_Excedente_Pct)
+)
+```
+
+```{r analisis_cuentas_fig}
+#| label: fig-factor-m
+#| fig-cap: "Reconstrucción del crecimiento de la variable M en Central_2"
+knitr::include_graphics(here("data", "processed", "plots", "Central2_FactorM_Trajectory.png"))
+```
+
+*Nota.* (Script: 05_Deteccion_Anomalias.R)
+
+## Esquema multicapa de detección de anomalías
+
+**Diseño del esquema — Objetivo 4.**
+
+El esquema de detección opera en tres capas:
+
+**Capa 1 — Criterio normativo determinístico:** Mes con R/A > 0.50 en cualquier cuenta. Identificación directa del incumplimiento.
+
+**Capa 2 — Criterio estadístico:** Residuos del modelo ARIMA que superen ±2.5σ. Identifica meses con comportamiento anómalo respecto al patrón histórico, independientemente del cumplimiento normativo.
+
+**Capa 3 — Cambio de régimen:** Prueba de Bai-Perron (Bai & Perron, 1998) sobre la serie de relación R/A de Central_2. Identifica rupturas estructurales en el nivel de incumplimiento. En la aplicación del algoritmo no se identificaron quiebres estadísticamente significativos adicionales a los eventos ya mapeados por la estacionalidad académica regular, confirmando que el incumplimiento de la subestación es un problema crónico estacionario.
+
+La @tbl-anomalias detalla los períodos detectados por las diferentes capas, cuyo comportamiento visual se observa en la @fig-anomalias.
+
+```{r deteccion_anomalias_tbl}
+#| label: tbl-anomalias
+#| tbl-cap: "Períodos con anomalías estadísticas (Capa 2) o estructurales (Capa 3) detectadas"
+df_anomalias <- read_csv(here("data", "processed", "Anomalias_Multicapa.csv"), show_col_types = FALSE)
+
+df_anomalias_filtrado <- df_anomalias %>%
+  filter(Anomala_Capa2 == 1L | Anomala_Capa3_Sede > 0) %>%
+  select(Ano, Mes, Relacion_Sede, Residuo_ARIMA_Std, Detalle_Capas) %>%
+  rename(`Año` = Ano, `Mes` = Mes, `Relación R/A Sede` = Relacion_Sede, `Residuo Estandarizado` = Residuo_ARIMA_Std, `Capas de Detección` = Detalle_Capas)
+
+apa_flextable(df_anomalias_filtrado)
+```
+
+```{r deteccion_anomalias_fig}
+#| label: fig-anomalias
+#| fig-cap: "Detección multicapa de anomalías en el consumo de Central_2"
+knitr::include_graphics(here("data", "processed", "plots", "Anomalias_Deteccion_Multicapa.png"))
+```
+
+*Nota.* (Script: 05_Deteccion_Anomalias.R)
+
+---
+
+## Estimación económica — CTER
+
+
+
+## Reconstrucción del factor M para Central_2
+
+**Estado del factor M — Central_2.**
+
+Central_2 registra incumplimiento continuo desde al menos 2014 (inicio de la base de datos disponible). Dado que:
+
+- Año 1 (meses 1–12 de incumplimiento): M = 1
+- Año 2 (meses 13–18): M escala de 1 a 6
+- Estabilización: M = 6 durante 12 meses
+- Año posterior sin corrección: M escala de 1 a 12
+
+Y que la única interrupción del incumplimiento fue de 2 meses no consecutivos en los últimos 36 meses (insuficiente para reinicio del factor según la norma que exige >3 meses consecutivos):
+
+**Central_2 se encuentra en el tramo de M = 6 o superior desde hace varios años.**
+
+La reconstrucción exacta de la trayectoria de M requiere determinar el mes exacto de inicio del incumplimiento continuo, lo cual se hizo en el script 03. A partir de esto, la @tbl-costos-cter y la @fig-cter-escenarios detallan los costos acumulados, mientras que la @fig-cter-proyeccion y la @tbl-proyeccion-cter ilustran el riesgo tarifario futuro.
+
+```{r estimacion_cter_tbl1}
+#| label: tbl-costos-cter
+#| tbl-cap: "Costos acumulados de CTER en la Nueva Normalidad por escenario (Jul 2023 - Jul 2025)"
+df_ct_escenarios <- read_csv(here("data", "processed", "CTER_Comparacion_Escenarios.csv"), show_col_types = FALSE)
+
+apa_flextable(
+  df_ct_escenarios %>% select(Nombre_Cuenta, Excedente_Total_kVArh, CTER_SinCorreccion, CTER_MitigacionM1, CTER_Correccion100) %>% rename(Cuenta = Nombre_Cuenta, `Excedente (kVArh)` = Excedente_Total_kVArh, `Sin Corrección (COP)` = CTER_SinCorreccion, `Mitigación M = 1 (COP)` = CTER_MitigacionM1, `Corrección Total (COP)` = CTER_Correccion100)
+)
+```
+
+```{r estimacion_cter_fig1}
+#| label: fig-cter-escenarios
+#| fig-cap: "Comparación de costos acumulados por escenario"
+knitr::include_graphics(here("data", "processed", "plots", "CTER_Comparacion_Escenarios.png"))
+```
+
+```{r estimacion_cter_fig2}
+#| label: fig-cter-proyeccion
+#| fig-cap: "Proyección de penalizaciones CTER para el próximo año"
+knitr::include_graphics(here("data", "processed", "plots", "CTER_Proyeccion_12Meses.png"))
+```
+
+*Nota.* (Script: 06_Estimacion_CTER.R)
+
+```{r estimacion_cter_tbl2}
+#| label: tbl-proyeccion-cter
+#| tbl-cap: "Proyección Mensual del CTER y Riesgo Tarifario (Ago 2025 - Jul 2026)"
+df_proy <- read_csv(here("data", "processed", "CTER_Proyeccion_12Meses.csv"), show_col_types = FALSE)
+
+df_proy_sede <- df_proy %>%
+  group_by(Fecha) %>%
+  summarise(
+    Limite_Inferior = sum(CTER_Proyectado_Mitigacion),
+    Limite_Superior = sum(CTER_Proyectado_Inaccion),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Brecha = Limite_Superior - Limite_Inferior,
+    Mes = format(Fecha, "%b %Y")
+  ) %>%
+  select(Mes, Limite_Inferior, Limite_Superior, Brecha) %>%
+  rename(`Mes` = Mes, `Límite Inferior ($)` = Limite_Inferior, `Límite Superior ($)` = Limite_Superior, `Brecha de Incertidumbre ($)` = Brecha)
+
+apa_flextable(df_proy_sede)
+```
+
+---
+
+# Discusión
+
+## Comportamiento estructural del factor de potencia en Central_2
+
+El hallazgo más relevante del estudio es la naturaleza no estocástica del incumplimiento normativo en la subestación `Central_2`. Los registros históricos evidencian que esta subestación operó dentro del umbral regulatorio de forma ininterrumpida entre 2001 y 2013, y que a partir de 2014 registra incumplimiento sistemático en el 100% de los períodos anuales, con excepción de los meses de cierre total durante la pandemia (2020) y un único mes en 2021. Esta transición abrupta de cumplimiento pleno a incumplimiento estructural en un horizonte de un año calendario sugiere la ocurrencia de un cambio en la composición de cargas inductivas de la subestación —posiblemente la conexión de nuevos equipos de climatización, laboratorios o infraestructura de cómputo— que elevó permanentemente la demanda de energía reactiva por encima del límite normativo. En ausencia de registros técnicos históricos que permitan identificar el evento específico, esta hipótesis constituye la explicación más plausible desde la perspectiva de la gestión de cargas eléctricas, y su verificación requeriría un inventario de equipos retroactivo que escapa al alcance de este estudio. Cabe destacar que la falta de este inventario de cargas constituye una no-conformidad directa con la etapa de "Revisión Energética" de la norma ISO 50001.
+
+Esta caracterización contrasta con la perspectiva del balance agregado de la sede, en la que la relación R/A total se mantiene consistentemente por debajo del umbral 0.50 en el período analizado. La divergencia entre el comportamiento agregado y el individual de `Central_2` ilustra una limitación estructural de los sistemas de monitoreo basados exclusivamente en facturación: la agregación de cuentas puede enmascarar focos de ineficiencia energética significativos que solo se hacen visibles al desagregar el análisis por subestación. Este resultado es coherente con lo reportado por Pérez-Lombard et al. (2008), y fuertemente respaldado por Castrillón (2021), quien señala explícitamente en su estudio de ISO 50001 en un campus universitario colombiano que la identificación de usos significativos de energía requiere desagregar el análisis instalación por instalación.
+
+## Desempeño predictivo: modelos econométricos frente a aprendizaje automático
+
+La superioridad del modelo SARIMA Manual ARIMA(0,1,2)(1,1,1)[12] frente a los algoritmos de aprendizaje automático (ExtraTrees, XGBoost) en la validación fuera de muestra (MAPE = 8.02% frente a 10.10% y 12.71%, respectivamente) es consistente con los principios del paradigma de parsimonia en modelado estadístico. En series temporales macro-mensuales de longitud moderada (139 observaciones), los algoritmos de ML enfrentan una restricción estructural: la estimación de un número elevado de parámetros internos con pocos datos disponibles incrementa el riesgo de sobreajuste, degradando la capacidad predictiva fuera de muestra incluso cuando el ajuste dentro de muestra es superior. Este fenómeno, documentado ampliamente por Hyndman y Athanasopoulos (2021), explica por qué el modelo SARIMA —con apenas cuatro parámetros estimados— captura la varianza del proceso de forma más eficiente que arquitecturas más complejas. Este fenómeno de sobreajuste de XGBoost en horizontes mensuales de longitud moderada coincide con las revisiones exhaustivas de Karpenko et al. (2026), quienes señalan que los modelos de Machine Learning requieren una granularidad temporal superior (diaria u horaria) para desplegar su ventaja no lineal sobre las estructuras estacionales lineales clásicas.
+
+La competitividad relativa de ExtraTrees (MAPE = 10.10%) frente a XGBoost (MAPE = 12.71%) sugiere que la aleatorización en la selección de umbrales de corte del primero actúa como regularizador implícito, reduciendo la varianza de las predicciones en escenarios de baja disponibilidad de datos. Este resultado matiza la conveniencia de los modelos de boosting secuencial —que acumulan errores de árboles previos— cuando el tamaño muestral no es suficiente para establecer gradientes estables de aprendizaje. En consecuencia, si se dispusiera de datos con mayor granularidad temporal (semanal o diaria), el potencial de los algoritmos ML para capturar patrones no lineales de consumo sería sustancialmente mayor, y la comparación de desempeño podría invertirse.
+
+El modelo SARIMAX con variables de fase (Pre-pandemia, Pandemia-Transición, Nueva Normalidad) presentó un AICc inferior al Auto ARIMA pero un MAPE fuera de muestra superior al SARIMA Manual. Esta aparente paradoja refleja el sobreajuste que puede inducir la inclusión de covariables estructurales cuando el período de validación (febrero–julio 2025) pertenece a un régimen uniforme (Nueva Normalidad), en el que las variables de fase no aportan varianza explicativa adicional. La evidencia sugiere que, para el horizonte de pronóstico de corto plazo en condiciones de operación normal, el modelo univariado parsimonioso es preferible al multivariado.
+
+## Incertidumbre tarifaria y evidencia parcial del factor M
+
+La cuantificación del impacto económico del CTER arrojó un rango de incertidumbre financiera entre $14.2 millones y $130.0 millones COP para el período de Nueva Normalidad (julio de 2023 a julio de 2025, 25 meses), con una brecha significativa entre escenarios. Este período corresponde al intervalo en que la norma CREG se encontraba plenamente vigente y la sede operaba en condiciones de presencialidad regular con la infraestructura actual, por lo que el cálculo no incluye períodos anteriores donde la operación del campus era atípica o donde la aplicación del cargo tarifario no estaba en vigor. Esta amplitud no refleja imprecisión metodológica sino una asimetría de información tarifaria estructural: la resolución CREG 015 de 2018 vincula la acumulación del factor multiplicador M a la superación del umbral durante más de 10 días calendario dentro de cada mes, condición que no puede verificarse con la granularidad mensual de los registros de facturación disponibles.
+
+La evidencia parcial proveniente de las facturas disponibles para el año 2025 muestra que el factor M aplicado por el operador de red es inferior a 4, lo que indica que Electrohuila no está liquidando el cargo con el recargo máximo regulatorio. Esta observación sugiere que, al menos en el período reciente, el perfil horario de la demanda reactiva de `Central_2` no supera el umbral normativo durante la totalidad de los días del mes, aproximando la situación real al escenario optimista del rango estimado. Sin embargo, esta inferencia es tentativa dado que un valor de M < 4 es compatible tanto con un incumplimiento horario esporádico como con un reinicio parcial del factor en algún período anterior no identificado. La resolución definitiva de esta incertidumbre requiere la implementación de sistemas de telemetría con resolución diaria o inferior, cuya instalación se recomienda como acción prioritaria.
+
+Esta limitación es, en sí misma, un hallazgo metodológico relevante: la imposibilidad de calcular el retorno sobre la inversión de cualquier medida correctiva con la información actualmente disponible constituye un argumento técnico directo para priorizar la medición inteligente sobre cualquier otra intervención en infraestructura. Este orden de prioridades está alineado con los requisitos de revisión energética y establecimiento de líneas base de la norma ISO 50001:2018.
+
+## Limitaciones del estudio
+
+El presente trabajo presenta limitaciones operativas que deben considerarse en la interpretación de los resultados:
+
+1. **Granularidad mensual:** Impide la verificación del umbral diario requerido por la norma CREG para la acumulación del factor M, introduciendo la incertidumbre tarifaria documentada. Esta limitación es inherente a la fuente de datos disponible y no puede resolverse en el marco del presente estudio.
+2. **Ausencia de inventario de cargas:** Impide formular hipótesis explicativas precisas sobre los determinantes del incumplimiento crónico de `Central_2`. La identificación del evento técnico que generó el cambio de régimen en 2014 requeriría acceso a registros históricos de mantenimiento e instalación de equipos que no estuvieron disponibles durante la ejecución del estudio.
+3. **No normalidad de residuos:** La normalidad de los residuos de los modelos de series de tiempo fue rechazada por la prueba de Shapiro-Wilk en ambas series principales. Aunque este resultado no invalida los modelos ni sus pronósticos puntuales, implica que los intervalos de predicción calculados bajo el supuesto de normalidad son aproximados. En consecuencia, los límites de los intervalos de confianza reportados en las tablas de pronósticos deben interpretarse como rangos orientativos y no como límites probabilísticos exactos.
+4. **Exclusión de escenarios de expansión:** La exclusión del tercer escenario de expansión de infraestructura (contemplado en el anteproyecto) limita la proyección del riesgo financiero a los patrones de consumo actuales, sin considerar el efecto de posibles ampliaciones físicas de la sede.
+5. **Exclusión del análisis individual de Central_5:** Como se evidenció en la exploración de datos, la subestación `Central_5` presenta fallas estructurales de medición que resultan en factores de potencia físicamente irreales, impidiendo su incorporación en modelos predictivos individuales.
+6. **Restricción matemática de la transformación Logit:** Es inviable aplicar la técnica a cuentas individuales en incumplimiento severo (donde R/A > 1).
+
+---
+
+# Conclusiones
+
+---
+
+## Conclusión General
+
+Se desarrolló con éxito un marco analítico-estadístico integral que transformó 291 períodos mensuales de facturación en un sistema de diagnóstico energético robusto para la Sede Central. A través de la orquestación de modelos de pronóstico paramétrico (SARIMA) y algoritmos de detección de anomalías multicapa, el análisis demostró que el campus exhibe una demanda estacional modelable, aunque los amplios intervalos de confianza (IC95) en el horizonte de predicción de 6 meses advierten sobre un nivel considerable de incertidumbre natural asociada a la volatilidad de los períodos vacacionales. Asimismo, se evidenció un incumplimiento normativo crónico focalizado en la subestación `Central_2` (FP < 0.90). La cuantificación económica de este patrón reveló un riesgo financiero severo, proyectando penalizaciones (CTER) que superan los \$41.5 millones COP anuales. En consecuencia, la evidencia técnica generada por este marco trasciende la facturación contable y establece el sustento empírico definitivo para justificar inversiones estructurales, demostrando que la institución opera bajo una profunda asimetría de información frente al esquema de cobro de su operador de red.
+
+---
+
+## Conclusiones por objetivo
+
+### Objetivo 1: Consolidación y armonización de la base de datos (2001–2025)
+Se consolidó y validó un repositorio de datos reproducible y unificado para las 5 subestaciones de la Sede Central, integrando 291 períodos mensuales. El tratamiento sistemático de valores faltantes mediante imputaciones históricas y el alineamiento de fechas comerciales eliminaron la discontinuidad operativa previa, estandarizando la calidad de la información. En consecuencia, la arquitectura de datos resultante, enriquecida con la variable climática de temperatura, constituye un insumo robusto y validado para la aplicación de modelos estadísticos predictivos y de aprendizaje automático.
+
+### Objetivo 2: Caracterización del comportamiento temporal y rupturas estructurales
+Mediante análisis de descomposición STL y pruebas de quiebre estructural, se identificó que el consumo de energía activa agregada exhibe una tendencia decreciente sostenida dividida en tres regímenes: *Pre-pandemia*, *Pandemia-Transición* y *Nueva Normalidad*. Este marco general contrasta fuertemente con el comportamiento a nivel de cuenta individual, donde se evidencia una divergencia operativa que separa el cumplimiento normativo regular del incumplimiento crónico focalizado en la subestación `Central_2`. La caracterización precisa de estos regímenes y perfiles de cuenta provee el sustento empírico indispensable para la segmentación del modelamiento predictivo y el diseño focalizado de estrategias de mitigación.
+
+### Objetivo 3: Construcción, validación y comparación de modelos de pronóstico
+A través de esquemas de validación cruzada temporal fuera de muestra ($h=1$), se demostró que el modelo SARIMA Manual (`ARIMA(0,1,2)(1,1,1)[12]`) maximiza el rendimiento predictivo (MAPE: 8.02%, MASE: 0.30), superando incluso las métricas de algoritmos no lineales como ExtraTrees (MAPE: 10.10%). Esta superioridad evidencia que, frente a series macro-mensuales con una estacionalidad predominante, las formulaciones paramétricas clásicas capturan la varianza del fenómeno de forma más eficiente que las arquitecturas de Machine Learning intensivas. A partir de este resultado, el modelo econométrico campeón se consolida como la herramienta técnica oficial para la proyección a corto plazo, viabilizando el cálculo anticipado de contingencias financieras por penalización tarifaria.
+
+### Objetivo 4: Esquema multicapa de detección de anomalías
+Mediante el diseño de un esquema analítico multicapa, fue posible aislar el incumplimiento crónico determinístico (Capa 1) de variaciones estocásticas puntuales (Capa 2), validando estadísticamente la pertinencia de las fechas de quiebre implementadas en el modelo predictivo (Capa 3). La implementación de este filtro evidenció que el campus mantiene una demanda reactiva estructuralmente predecible —salvo en choques exógenos severos—, dejando al descubierto una profunda asimetría de información interna para identificar causalmente eventos anómalos operativos. Por lo tanto, el diagnóstico multicapa justifica técnicamente la necesidad de trascender la facturación agregada, soportando la recomendación inmediata de establecer sistemas de telemetría e inventarios de carga en tiempo real.
+
+### Objetivo 5: Impacto económico CTER y soporte de decisiones
+Debido a la limitación técnica de carecer de datos telemétricos diarios, las pérdidas operativas por Cargo por Transporte de Energía Reactiva (CTER) durante la *Nueva Normalidad* se estimaron en un rango de incertidumbre financiera entre **[ \$9.2 millones , \$84.1 millones ] COP**, focalizado en la subestación `Central_2`. Este intervalo contrasta el costo del incumplimiento esporádico (Límite Inferior, $M=1$) frente a la máxima penalización regulada por inacción (Límite Superior, $M=12$), lo cual materializa una ineficiencia económica latente de hasta el 89% del costo potencial (\$74.9 millones COP). **Esta misma incertidumbre proyecta un riesgo tarifario para el próximo año que oscilará entre los \$4.4 millones COP (Límite Inferior) y una penalización superior a los \$41.5 millones COP en caso de inacción continua**. En consecuencia, este hallazgo evidencia la asimetría de información tarifaria en la que se encuentra la institución, haciendo económicamente inviable el cálculo preciso del retorno de inversión (ROI) para proyectos de eficiencia sin antes corregir la infraestructura de monitoreo, lo que fundamenta las directrices de intervención desarrolladas en la sección de recomendaciones.
+
+---
+
+# Recomendaciones
+
+La implementación de acciones de mejora en edificaciones universitarias y sistemas de gestión de la energía a gran escala (Pérez-Lombard et al., 2008) debe estructurarse bajo el ciclo de mejora continua PHVA (Planear, Hacer, Verificar, Actuar) propuesto por las normas internacionales y nacionales **ISO 50001:2018** y **NTC-ISO 50001:2019** (International Organization for Standardization, 2018; ICONTEC, 2019):
+
+### 1. Planificación Energética: Medida Inteligente y Caracterización de Hábitos (Planear)
+*   **Medición Inteligente:** Implementar sistemas de telemedida y medición inteligente en cada una de las subestaciones de la Sede Central. Esto permitirá capturar datos con granularidad horaria o quince-minutal, facilitando la identificación de hábitos de consumo, perfiles de carga en tiempo real y patrones de pago para optimizar la facturación.
+*   **Inventario de Cargas por Cuentas:** Realizar un censo o inventario detallado de equipos eléctricos (aires acondicionados, luminarias, motores, servidores) asociados a cada cuenta de cobro. Esta línea base es indispensable para planificar el crecimiento estructural y ordenado de la universidad (nuevas aulas, laboratorios y oficinas) asegurando que no se sobrecargue el sistema ni se penalice el factor de potencia. Como bien demuestra Castrillón (2021), el "censo de carga" es la herramienta estándar de auditoría energética previa a cualquier intervención técnica de compensación bajo el marco ISO 50001.
+
+### 2. Acciones Correctivas Escalonadas (Hacer)
+
+*   **Mitigación Operativa por Hábitos (Lograr el Escenario Optimista):** 
+    Alcanzar el escenario optimista ($M=1$) reportado en las proyecciones no requiere inversión de capital en infraestructura, sino "ingeniería de procesos" y gestión de hábitos (apagado automático de equipos en horas no lectivas, escalonamiento de cargas inductivas). Si la universidad logra modificar estos patrones operativos de modo que el límite de reactiva no se supere durante más de 10 días al mes, la penalización no se acumulará. Para lograr esta gestión precisa de la demanda en el tiempo —sabiendo qué y cuándo apagar—, **es de carácter obligatorio contar primero con la Medición Inteligente.**
+
+*   **Compensación Física Definitiva (Lograr CTER = 0):** 
+    La instalación de un banco de condensadores automáticos elimina físicamente el excedente, pero es una obra de infraestructura costosa. Debido al profundo "rango de incertidumbre" actual (donde los ahorros reales por la obra oscilan sin precisión entre \$14.2 y \$130.0 millones COP), **el cálculo de un Retorno de Inversión (ROI) es económicamente inmanejable en este momento.** Esta inversión **solo debe ejecutarse después de haber implementado la telemetría**, la cual despejará la incertidumbre financiera (permitiendo calcular un ROI real) y proveerá el estudio de armónicos obligatorio para no sobredimensionar el equipo ni dañar la red tecnológica de la sede. Como sostienen Pérez-Lombard et al. (2008) y Li et al. (2025), la gestión moderna de la eficiencia energética en campus públicos es inviable bajo registros agregados de facturación comercial. La transición a la telemetría horaria no es un gasto accesorio, sino el prerrequisito metodológico estándar para aislar los usos significativos de energía y viabilizar el control adaptativo de cargas.
+
+### 3. Monitoreo y Revisión Energética (Verificar - Actuar)
+*   Utilizar el tablero de control e indicadores desarrollados en este proyecto (ranking de excedentes y proyección CTER) como parte del proceso de auditoría y revisión por la dirección de la ISO 50001, asegurando que las decisiones de inversión y mantenimiento preventivo se basen en datos históricos y predictivos de alta confiabilidad.
+
+---
+
+# Referencias
+
+- Akaike, H. (1974). A new look at the statistical model identification. *IEEE Transactions on Automatic Control*, 19(6), 716–723. https://doi.org/10.1109/TAC.1974.1100705
+- Castrillón Mendoza, R. del P. (2021). *Herramientas de gestión energética para el desarrollo sostenible en edificios aplicado a un campus universitario en Colombia* [Tesis doctoral, Universidad de Valladolid]. Repositorio institucional.
+- Bai, J., & Perron, P. (1998). Estimating and testing linear models with multiple structural changes. *Econometrica*, 66(1), 47–78. https://doi.org/10.2307/2998540
+- Box, G. E. P., Jenkins, G. M., Reinsel, G. C., & Ljung, G. M. (2015). *Time series analysis: Forecasting and control* (5th ed.). John Wiley & Sons.
+- Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining*, 785–794. https://doi.org/10.1145/2939672.2939785
+- Cleveland, R. B., Cleveland, W. S., McRae, J. E., & Terpenning, I. (1990). STL: A seasonal-trend decomposition procedure based on loess. *Journal of Official Statistics*, 6(1), 3–73.
+- Comisión de Regulación de Energía y Gas [CREG]. (2018). *Resolución CREG 015 de 2018: Por la cual se establecen las condiciones para la prestación del servicio de energía eléctrica en el nivel de tensión I*. CREG.
+- Comisión de Regulación de Energía y Gas [CREG]. (2019). *Resolución CREG 199 de 2019: Por la cual se establecen los cargos por transporte de energía reactiva (CTER) y el factor multiplicador M*. CREG.
+- Congreso de la República de Colombia. (2014). *Ley 1715 de 2014: Por medio de la cual se regula la integración de las energías renovables no convencionales al sistema energético nacional*. Diario Oficial.
+- Congreso de la República de Colombia. (2024). *Ley 2407 de 2024: Por la cual se establecen medidas para promover la eficiencia energética en el sector público*. Diario Oficial.
+- Cox, D. R. (1970). *The analysis of binary data*. Methuen.
+- Dickey, D. A., & Fuller, W. A. (1979). Distribution of the estimators for autoregressive time series with a unit root. *Journal of the American Statistical Association*, 74(366), 427–431. https://doi.org/10.2307/2286348
+- Geurts, P., Ernst, D., & Wehenkel, L. (2006). Extremely randomized trees. *Machine Learning*, 63(1), 3–42. https://doi.org/10.1007/s10994-006-6226-1
+- Hyndman, R. J., & Athanasopoulos, G. (2021). *Forecasting: Principles and practice* (3rd ed.). OTexts. https://otexts.com/fpp3/
+- Instituto Colombiano de Normas Técnicas y Certificación [ICONTEC]. (2019). *NTC-ISO 50001:2019: Sistemas de gestión de la energía — Requisitos con orientación para su uso*. ICONTEC.
+- International Organization for Standardization. (2018). *ISO 50001:2018: Energy management systems — Requirements with guidance for use*. ISO.
+- Karpenko, D., Yevtukhova, T., & Novoseltsev, O. (2026). A review of machine learning models and algorithms for short-term forecasting of multi-energy consumption in buildings. *e-Prime - Nexus of Electrical, Electronic, and Intelligent Engineering*, 17, 201184. https://doi.org/10.1016/j.eprime.2026.201184
+- Kwiatkowski, D., Phillips, P. C. B., Schmidt, P., & Shin, Y. (1992). Testing the null hypothesis of stationarity against the alternative of a unit root. *Journal of Econometrics*, 54(1–3), 159–178. https://doi.org/10.1016/0304-4076(92)90104-Y
+- Li, Y., Arellano-Espitia, F., Aler, R., Igualada, L., & Corchero, C. (2025). Data-driven methods and their applications to building HVAC energy consumption prediction: A review. *Journal of Building Engineering*, 116, 114612. https://doi.org/10.1016/j.jobe.2025.114612
+- Little, R. J. A., & Rubin, D. B. (2019). *Statistical analysis with missing data* (3rd ed.). John Wiley & Sons.
+- Ljung, G. M., & Box, G. E. P. (1978). On a measure of lack of fit in time series models. *Biometrika*, 65(2), 297–303. https://doi.org/10.1093/biomet/65.2.297
+- Ministerio de Minas y Energía. (2013). *Resolución 90708 de 2013: Por la cual se expide el Reglamento Técnico de Instalaciones Eléctricas (RETIE)*. Ministerio de Minas y Energía de Colombia.
+- Ministerio de Minas y Energía. (2024). *Resolución 40117 de 2024: Por la cual se actualiza el Reglamento Técnico de Instalaciones Eléctricas (RETIE)*. Ministerio de Minas y Energía de Colombia.
+- Pérez-Lombard, L., Ortiz, J., & Pout, C. (2008). A review on buildings energy consumption information. *Energy and Buildings*, 40(3), 394–398. https://doi.org/10.1016/j.enbuild.2007.03.007
+
+---
+
+# Apéndices
+
+## Apéndice A: Tablas suplementarias
+
+```{r tabla_apendice_A1}
+df_cumplimiento_ano <- read_csv(here("data", "processed", "Cumplimiento_Cuentas_Ano.csv"), show_col_types = FALSE)
+
+apa_flextable(
+  df_cumplimiento_ano %>% select(Nombre_Cuenta, Ano, Meses_Total, Meses_Cumplen, Meses_Incumplen, Porcentaje_Cumple) %>% rename(Cuenta = Nombre_Cuenta, `Año` = Ano, `Meses Totales` = Meses_Total, Cumplen = Meses_Cumplen, Incumplen = Meses_Incumplen, `% Cumplimiento` = Porcentaje_Cumple)
+)
+```
+
+## Apéndice B: Registro de scripts
+
+| Script | Descripción | Estado |
+|--------|-------------|--------|
+| 01_Preparacion_Datos.R | Carga, limpieza, imputación, pagos y excedente Sede Central | ✓ Completo |
+| 02_Subsets_Exploracion.R | Subsets temporales (2014+ y Nueva Normalidad) + exploración visual | ✓ Completo |
+| 03_Analisis_Cuentas.R | Análisis descriptivo por cuenta, ranking y factor M (CREG 199/2019) | ✓ Completo |
+| 04_Modelado_ARIMA.R | EDA + modelado ARIMA/SARIMAX activa y reactiva | ✓ Completo |
+| 05_Deteccion_Anomalias.R | Detección de anomalías multicapa (normativa, estadística y cambio de régimen) | ✓ Completo |
+| 06_Estimacion_CTER.R | Estimación económica y proyección CTER por escenarios | ✓ Completo |
+| 07_Modelos_Machine_Learning.R | Modelado de Machine Learning (XGBoost y ExtraTrees) y métricas | ✓ Completo |
+
+
+
+
+
+

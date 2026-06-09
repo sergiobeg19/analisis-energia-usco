@@ -27,7 +27,7 @@ library(lubridate)
 # ─────────────────────────────────────────────────────────────────────────────
 # PARÁMETROS
 # ─────────────────────────────────────────────────────────────────────────────
-UMBRAL_FP <- 0.4843   # Umbral normativo CREG 015 de 2018 (R/A <= 0.4843)
+UMBRAL_FP <- 0.50   # Umbral normativo CREG (R/A <= 0.50 para Niveles I y II)
 
 # Rutas de entrada
 RUTA_CONSUMO_RAW <- here("data", "raw", "Consumo_Cuentas_.xlsx")
@@ -232,7 +232,7 @@ print(head(serie_sede, 6))
 cat("═══════════════════════════════════════════════════\n\n")
 
 # =============================================================================
-# BLOQUE 7: Exportar solo CSV
+# BLOQUE 7: Exportar CSV y Excel
 # =============================================================================
 cat("── Exportando archivos...\n")
 
@@ -241,6 +241,12 @@ dir.create(here("data", "processed"), showWarnings = FALSE, recursive = TRUE)
 write_csv(df_final,   RUTA_DETALLE_CSV)
 write_csv(serie_sede,  RUTA_SERIE_CSV)
 
-cat(sprintf("   ✓ Detalle cuenta-período : %s\n", RUTA_DETALLE_CSV))
+# Exportar también en formato Excel
+library(writexl)
+RUTA_DETALLE_XLSX <- here("data", "processed", "Detalle_Cuenta_Periodo.xlsx")
+write_xlsx(df_final, RUTA_DETALLE_XLSX)
+
+cat(sprintf("   ✓ Detalle cuenta-período (CSV)   : %s\n", RUTA_DETALLE_CSV))
+cat(sprintf("   ✓ Detalle cuenta-período (Excel) : %s\n", RUTA_DETALLE_XLSX))
 cat(sprintf("   ✓ Serie Sede Central     : %s\n", RUTA_SERIE_CSV))
 cat("\nProceso completado exitosamente.\n")

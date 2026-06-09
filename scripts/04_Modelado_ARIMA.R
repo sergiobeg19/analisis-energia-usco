@@ -1,5 +1,5 @@
 # =============================================================================
-# SCRIPT 03: Modelado ARIMA / SARIMA / SARIMAX — Serie de Consumo Eléctrico
+# SCRIPT 04: Modelado ARIMA / SARIMA / SARIMAX — Serie de Consumo Eléctrico
 # Universidad Surcolombiana (USCO) — Sede Central
 # =============================================================================
 # INPUT:  data/processed/Serie_Sede_Desde2014.csv
@@ -233,6 +233,11 @@ analizar_y_modelar_serie <- function(y_vector, nombre_variable, label_corto, df,
     RMSE_Test = round(c(met_auto$RMSE, met_manual$RMSE, met_x_vac$RMSE, met_x_temp$RMSE, met_x_mult$RMSE), 2),
     MAPE_Test_Pct = round(c(met_auto$MAPE, met_manual$MAPE, met_x_vac$MAPE, met_x_temp$MAPE, met_x_mult$MAPE), 2)
   )
+  # Exportar predicciones de prueba de Activa para comparativa con ML
+  if (label_corto == "Activa") {
+    pred_test_manual <- y_vector[(n-h_test+1):n] - err_manual
+    write_csv(data.frame(SARIMA_Manual = pred_test_manual), here("data", "processed", "SARIMA_Test_Preds.csv"))
+  }
   
   cat("\n═══════════════════════════════════════════════════\n")
   cat(sprintf("  COMPARATIVA DE MODELOS — %s\n", toupper(label_corto)))
@@ -389,5 +394,146 @@ res_reactiva <- analizar_y_modelar_serie(
   label_corto = "Reactiva",
   df = df_resumen
 )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. MODELADO DE LA RELACIÓN R/A CON TRANSFORMACIÓN LOGIT
+# ─────────────────────────────────────────────────────────────────────────────
+cat("\n===================================================\n")
+cat(" INICIANDO ANÁLISIS: RELACIÓN R/A (CON LOGIT)\n")
+cat("===================================================\n")
+
+# Calcular relación agregada
+relacion_total <- df_resumen$Reactiva_Total / df_resumen$Activa_Total
+
+# Generar y guardar gráficos exploratorios para la Relación R/A
+plot_dir <- here("data", "processed", "plots")
+ts_ra <- ts(relacion_total, start = c(df_resumen$Ano[1], df_resumen$Mes[1]), frequency = 12)
+
+# 1. Serie cruda
+p1_ra <- autoplot(ts_ra) +
+  labs(title = "Relación R/A mensual - Sede Central", x = "Año", y = "Relación R/A") +
+  theme_minimal()
+ggsave(filename = file.path(plot_dir, "Relacion_01_raw.png"), plot = p1_ra, width = 8, height = 4)
+
+# 2. Descomposición STL
+stl_fit_ra <- stl(ts_ra, s.window = "periodic", robust = TRUE)
+p2_ra <- autoplot(stl_fit_ra) +
+  labs(title = "Descomposición STL - Relación R/A") +
+  theme_minimal()
+ggsave(filename = file.path(plot_dir, "Relacion_02_stl.png"), plot = p2_ra, width = 8, height = 6)
+
+# 3. Estacionalidad
+p3_ra <- ggseasonplot(ts_ra, year.labels = TRUE, continuous = TRUE) +
+  labs(title = "Patrón estacional por año - Relación R/A", x = "Mes", y = "Relación R/A") +
+  theme_minimal()
+ggsave(filename = file.path(plot_dir, "Relacion_03_seasonal.png"), plot = p3_ra, width = 8, height = 4)
+
+# 4. Boxplot
+df_box_ra <- df_resumen %>% mutate(Mes_label = month.abb[Mes])
+p4_ra <- ggplot(df_box_ra, aes(x = factor(Mes, labels = month.abb), y = relacion_total)) +
+  geom_boxplot(fill = "#B5D4F4", color = "#185FA5") +
+  labs(title = "Distribución por mes del año - Relación R/A", x = "Mes", y = "Relación R/A") +
+  theme_minimal()
+ggsave(filename = file.path(plot_dir, "Relacion_04_boxplot.png"), plot = p4_ra, width = 8, height = 4)
+
+# Aplicar transformación logit
+logit_y <- log(relacion_total / (1 - relacion_total))
+
+# Objeto TS para la serie logit
+ts_logit <- ts(logit_y, start = c(df_resumen$Ano[1], df_resumen$Mes[1]), frequency = 12)
+
+# Pruebas de Estacionariedad
+cat("── Pruebas de estacionariedad (Logit R/A)...\n")
+adf_logit <- adf.test(ts_logit)
+kpss_logit <- kpss.test(ts_logit)
+cat(sprintf("   ADF  (nivel)  : estadístico = %.4f,  p = %.4f\n", adf_logit$statistic, adf_logit$p.value))
+cat(sprintf("   KPSS (nivel)  : estadístico = %.4f,  p = %.4f\n", kpss_logit$statistic, kpss_logit$p.value))
+
+# Determinar d si es necesario
+d_select <- 0
+if (adf_logit$p.value > 0.05 && kpss_logit$p.value < 0.05) {
+  cat("   → Serie posiblemente NO estacionaria. Probando primera diferencia...\n")
+  ts_diff <- diff(ts_logit)
+  adf_diff <- adf.test(ts_diff)
+  kpss_diff <- kpss.test(ts_diff, null = "Level")
+  cat(sprintf("   ADF  (diff-1) : estadístico = %.4f,  p = %.4f\n", adf_diff$statistic, adf_diff$p.value))
+  cat(sprintf("   KPSS (diff-1) : estadístico = %.4f,  p = %.4f\n", kpss_diff$statistic, kpss_diff$p.value))
+  d_select <- 1
+} else {
+  cat("   → Serie estacionaria en nivel (d = 0)\n")
+}
+
+# Ajuste automático del modelo ARIMA
+fit_logit <- auto.arima(ts_logit, d = d_select, seasonal = TRUE)
+cat(sprintf("   ✓ Modelo auto.arima ajustado: %s\n", as.character(fit_logit)))
+
+# Resumen de diagnósticos de residuos
+cat("── Diagnósticos de residuos...\n")
+box_test <- Box.test(residuals(fit_logit), lag = 24, type = "Ljung-Box")
+shapiro_test <- shapiro.test(residuals(fit_logit))
+cat(sprintf("   Test Ljung-Box (lag=24): p = %.4f\n", box_test$p.value))
+cat(sprintf("   Test Shapiro-Wilk      : p = %.4f\n", shapiro_test$p.value))
+
+# Pronóstico a 6 meses
+cat("── Generando pronóstico a futuro (6 meses)...\n")
+fc_logit <- forecast(fit_logit, h = 6)
+
+# Aplicar transformación inversa logit: 1 / (1 + exp(-x))
+inv_logit <- function(x) {
+  1 / (1 + exp(-x))
+}
+
+fechas_futuras <- seq(from = make_date(df_resumen$Ano[nrow(df_resumen)], df_resumen$Mes[nrow(df_resumen)], 1) + months(1),
+                      length.out = 6, by = "month")
+
+fc_ra_df <- data.frame(
+  Mes_Pronostico = format(fechas_futuras, "%Y-%m"),
+  Punto = round(inv_logit(as.numeric(fc_logit$mean)), 4),
+  IC80_inf = round(inv_logit(as.numeric(fc_logit$lower[, 1])), 4),
+  IC80_sup = round(inv_logit(as.numeric(fc_logit$upper[, 1])), 4),
+  IC95_inf = round(inv_logit(as.numeric(fc_logit$lower[, 2])), 4),
+  IC95_sup = round(inv_logit(as.numeric(fc_logit$upper[, 2])), 4)
+)
+
+print(fc_ra_df)
+
+# Exportar pronóstico a CSV
+write_csv(fc_ra_df, here("data", "processed", "RA_Forecast_Logit.csv"))
+
+# Graficar y guardar pronóstico en escala original R/A
+plot_dir <- here("data", "processed", "plots")
+
+# Crear data frame histórico para graficar junto al pronóstico
+hist_df <- data.frame(
+  Fecha = make_date(df_resumen$Ano, df_resumen$Mes, 1),
+  Relacion = relacion_total,
+  Tipo = "Histórico"
+)
+
+fc_plot_df <- data.frame(
+  Fecha = fechas_futuras,
+  Relacion = fc_ra_df$Punto,
+  IC80_inf = fc_ra_df$IC80_inf,
+  IC80_sup = fc_ra_df$IC80_sup,
+  IC95_inf = fc_ra_df$IC95_inf,
+  IC95_sup = fc_ra_df$IC95_sup,
+  Tipo = "Pronóstico"
+)
+
+p_ra <- ggplot() +
+  geom_line(data = hist_df, aes(x = Fecha, y = Relacion, color = Tipo), linewidth = 0.6) +
+  geom_line(data = fc_plot_df, aes(x = Fecha, y = Relacion, color = Tipo), linewidth = 0.7) +
+  geom_ribbon(data = fc_plot_df, aes(x = Fecha, ymin = IC95_inf, ymax = IC95_sup, fill = "IC 95%"), alpha = 0.15) +
+  geom_ribbon(data = fc_plot_df, aes(x = Fecha, ymin = IC80_inf, ymax = IC80_sup, fill = "IC 80%"), alpha = 0.25) +
+  geom_hline(yintercept = 0.50, color = "red", linetype = "dashed", linewidth = 0.5) +
+  scale_color_manual(values = c("Histórico" = "#2196F3", "Pronóstico" = "#FF5722")) +
+  scale_fill_manual(values = c("IC 80%" = "#FF5722", "IC 95%" = "#FF5722")) +
+  labs(title = paste("Pronóstico de Relación R/A — Sede Central (Modelo:", as.character(fit_logit), ")"),
+       subtitle = "Línea roja discontinua: Límite normativo CREG 015 (R/A = 0.50)",
+       x = "Fecha", y = "Relación R/A", fill = "Intervalos de Conf.", color = "Serie") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave(filename = file.path(plot_dir, "RA_Forecast_Logit.png"), plot = p_ra, width = 8, height = 4)
 
 cat("\nProceso de modelado y diagnóstico completado. Gráficos guardados en data/processed/plots/\n")
