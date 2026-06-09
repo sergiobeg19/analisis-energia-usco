@@ -104,6 +104,8 @@ The inefficient management of reactive energy in higher education institutions g
 
 **Keywords:** Reactive energy; Power factor; Time series; SARIMA; CTER; ISO 50001.
 
+*Código y datos:* [https://github.com/sergiobeg19/analisis-energia-usco](https://github.com/sergiobeg19/analisis-energia-usco)
+
 
 # Introducción
 
@@ -439,6 +441,10 @@ Por esta razón, las pérdidas económicas no se cuantifican de forma determiní
 - **Límite Superior (Escenario Pesimista, M Acumulado):** Asume un incumplimiento ininterrumpido ($> 10$ días), forzando el crecimiento consecutivo de la variable $M$ hasta su tope regulatorio de 12.
 
 *Nota metodológica:* El anteproyecto de investigación planteaba inicialmente la modelación de un tercer escenario (Escenario de Expansión de Infraestructura). Sin embargo, este fue excluido de la ejecución final debido a la carencia de los planos eléctricos y el cuadro de cargas proyectado para los futuros edificios, información indispensable para realizar una simulación técnica rigurosa.
+
+## Reproducibilidad y Código Fuente
+
+Para garantizar la transparencia y reproducibilidad de esta investigación, la totalidad de los datos estructurados, modelos estadísticos y el código fuente en R (junto con la documentación en Quarto) se encuentran almacenados y disponibles públicamente en el repositorio: [https://github.com/sergiobeg19/analisis-energia-usco](https://github.com/sergiobeg19/analisis-energia-usco)
 
 # Resultados
 
@@ -958,6 +964,8 @@ apa_flextable(
 ```
 
 ## Apéndice B: Registro de scripts
+
+La siguiente tabla describe los scripts elaborados. Todo el código puede ser consultado o descargado desde el repositorio oficial del proyecto: [https://github.com/sergiobeg19/analisis-energia-usco](https://github.com/sergiobeg19/analisis-energia-usco)
 
 | Script | Descripción | Estado |
 |--------|-------------|--------|
